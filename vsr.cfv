@@ -1,5 +1,6 @@
 // Vemoris Security Review (VSR) — revisor de seguridad propio, escrito en C-Forge.
-// Analiza C++, Swift, JavaScript/TypeScript y C-Forge sin servicios externos.
+// Analiza C-Forge, JavaScript/TypeScript, Swift, C/C++, Python, Go, Rust, C#,
+// PHP, Java y Kotlin sin servicios externos.
 //
 //   vsr escanear [ruta] [opciones]     Revisa una carpeta o archivo
 //   vsr ignorar <huella> [motivo]      Marca un hallazgo como falso positivo (VSR aprende)
@@ -21,7 +22,7 @@ importar "src/analisis.cfv"
 importar "json"
 importar "sistema"
 
-sea VERSION = "0.1.0"
+sea VERSION = "0.2.0"
 sea OMITIR = {"node_modules": verdadero, "dist": verdadero, "build": verdadero, "Pods": verdadero, "DerivedData": verdadero, "vendor": verdadero, "target": verdadero, "out": verdadero, "coverage": verdadero, "third_party": verdadero, "deps": verdadero, "bootstrap": verdadero}
 sea NIVELES = {"baja": 1, "media": 2, "alta": 3, "critica": 4, "nunca": 99}
 sea ICONOS = {"critica": "🔴", "alta": "🟠", "media": "🟡", "baja": "🔵"}

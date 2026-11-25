@@ -1,5 +1,15 @@
 # Cambios
 
+## 0.2.0 — 2026-11-25
+- **7 lenguajes nuevos:** Python, Go, Rust, C#, PHP, Java y Kotlin (11 en total).
+- Reglas nuevas: `deserializacion-insegura` e `inclusion-archivos`.
+- Interpolación por lenguaje: f-strings de Python, `$"…"` de C#, `$x`/`${x}` de Kotlin y PHP.
+- SQL armado con `fmt.Sprintf`, `format!`, `String.format`, `.format()` y `%`.
+- TLS desactivado en Python (`verify=False`), Go (`InsecureSkipVerify`), Rust, C# y Java.
+- Go `:=`, declaraciones tipadas (`let x: T =`) y llamadas encadenadas (`new X().metodo()`).
+- Menos falsos positivos en secretos y en `rand` (métodos y `crypto/rand`).
+- 97 pruebas.
+
 ## 0.1.0 — 2026-11-25
 - Primera versión, escrita 100 % en C-Forge.
 - Analiza C++, Swift, JavaScript/TypeScript y C-Forge (y Info.plist).

@@ -2,14 +2,30 @@
 
 🇪🇸 Español · [🇬🇧 English](README.en.md)
 
-Revisor de seguridad **propio de Vemoris Software**, escrito 100 % en **C-Forge**. Revisa código **C++, Swift, JavaScript/TypeScript y C-Forge** sin depender de ningún servicio externo: no usa APIs de IA, no envía tu código a ninguna parte y no tiene costo por revisión.
+Revisor de seguridad **propio de Vemoris Software**, escrito 100 % en **C-Forge**. Revisa código en **11 lenguajes** sin depender de ningún servicio externo: no usa APIs de IA, no envía tu código a ninguna parte y no tiene costo por revisión.
+
+## Lenguajes
+
+| Lenguaje | Archivos |
+|---|---|
+| C-Forge | `.cfv` |
+| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.tsx` `.vue` `.svelte` |
+| Swift | `.swift` (+ `Info.plist`) |
+| C / C++ / Objective-C | `.c` `.cpp` `.cc` `.h` `.hpp` `.m` `.mm` |
+| Python | `.py` |
+| Go | `.go` |
+| Rust | `.rs` |
+| C# | `.cs` |
+| PHP | `.php` `.phtml` |
+| Java | `.java` |
+| Kotlin | `.kt` `.kts` |
 
 ## Qué detecta
 
 | Regla | Ejemplo |
 |---|---|
 | 🔴 `inyeccion-comandos` | `exec("ls " + req.query.dir)`, `system(argv[1])`, `sistema_comando("grep " + nombre)` |
-| 🔴 `inyeccion-sql` | `` db.query(`SELECT … ${id}`) ``, `"SELECT … '\(nombre)'"`, `db_consulta(db, "… " + x)` |
+| 🔴 `inyeccion-sql` | `` db.query(`SELECT … ${id}`) ``, `f"SELECT … {x}"`, `fmt.Sprintf("SELECT … %s", x)`, `format!("… {}", x)`, `"… " . $x` |
 | 🔴 `secreto-expuesto` | Claves de AWS, GitHub, Anthropic, Stripe, Slack, Google, claves privadas y valores con alta entropía |
 | 🔴 `desbordamiento-memoria` | `strcpy`, `strcat`, `sprintf`, `gets`, `scanf("%s")` |
 | 🟠 `xss` | `el.innerHTML = req.body.html`, `dangerouslySetInnerHTML`, `loadHTMLString(...)` |
@@ -17,6 +33,8 @@ Revisor de seguridad **propio de Vemoris Software**, escrito 100 % en **C-Forge*
 | 🟠 `ssrf` | `fetch(req.query.url)`, `http_get(url_del_usuario)` |
 | 🟠 `codigo-dinamico` | `eval(...)`, `new Function(...)` |
 | 🟠 `cadena-formato` | `printf(argv[1])` |
+| 🟠 `deserializacion-insegura` | `pickle.loads(request.data)`, `unserialize($_COOKIE[…])`, `BinaryFormatter`, `ObjectInputStream` |
+| 🔴 `inclusion-archivos` | `include $_GET['pagina']` (PHP) |
 | 🟠 `tls-desactivado` | `rejectUnauthorized: false`, `CURLOPT_SSL_VERIFYPEER, 0` |
 | 🟡 `redireccion-abierta`, `aleatorio-inseguro`, `almacenamiento-inseguro`, `ats-desactivado` | |
 | 🔵 `hash-debil`, `regex-dinamica` | |

@@ -11,10 +11,16 @@
 importar "lexico.cfv"
 importar "reglas.cfv"
 
-sea SEPARADORES = {".": verdadero, "?.": verdadero, "->": verdadero, "::": verdadero}
+sea SEPARADORES_TODOS = {".": verdadero, "?.": verdadero, "->": verdadero, "::": verdadero, "?->": verdadero}
+sea SEPARADORES_PHP = {"->": verdadero, "::": verdadero, "?->": verdadero}
+// Configuración del archivo que se está analizando (se ajusta en analizar_texto).
+sea CONFIG = {"lenguaje": "js", "concat": "+", "crypto_rand": falso}
+sea SEPARADORES = SEPARADORES_TODOS
+sea FORMATEADORES = {"Sprintf": verdadero, "Fprintf": verdadero, "format": verdadero, "Format": verdadero, "sprintf": verdadero, "formatted": verdadero, "fmt": verdadero}
+sea SALTAR_DECLARACION = {"js": verdadero, "java": verdadero, "csharp": verdadero, "cpp": verdadero, "php": verdadero}
 sea CONTINUAN = {"+": verdadero, ",": verdadero, "(": verdadero, "=": verdadero, "?": verdadero, ":": verdadero, "||": verdadero, "&&": verdadero, "??": verdadero, ".": verdadero, "?.": verdadero, "[": verdadero, "{": verdadero, "=>": verdadero, "+=": verdadero}
 sea DECLARA_FUNCION = {"funcion": verdadero, "function": verdadero, "func": verdadero, "fn": verdadero, "def": verdadero, "fun": verdadero}
-sea DECLARACIONES = {"const": verdadero, "let": verdadero, "var": verdadero, "sea": verdadero, "auto": verdadero, "constante": verdadero}
+sea DECLARACIONES = {"const": verdadero, "let": verdadero, "var": verdadero, "val": verdadero, "sea": verdadero, "auto": verdadero, "constante": verdadero}
 
 // ── Utilidades ───────────────────────────────────────────────────────────
 
@@ -42,13 +48,18 @@ funcion _entropia(t) {
 }
 
 // Cadena con puntos que empieza en el token i: "req.body.id". Devuelve [cadena, índice_último].
+funcion _es_separador(t) {
+    si (CONFIG["lenguaje"] == "php") { retornar tiene_clave(SEPARADORES_PHP, t) }
+    retornar tiene_clave(SEPARADORES_TODOS, t)
+}
+
 funcion _cadena(tk, i) {
     sea textos = tk["textos"]
     sea tipos = tk["tipos"]
     sea n = longitud(tipos)
     sea partes = [textos[i]]
     sea j = i
-    mientras (j + 2 < n y tipos[j + 1] == "op" y tiene_clave(SEPARADORES, textos[j + 1]) y tipos[j + 2] == "id") {
+    mientras (j + 2 < n y tipos[j + 1] == "op" y _es_separador(textos[j + 1]) y tipos[j + 2] == "id") {
         agregar(partes, textos[j + 2])
         j = j + 2
     }
@@ -59,7 +70,13 @@ funcion _es_inicio_cadena(tk, i) {
     si (tk["tipos"][i] != "id") { retornar falso }
     si (i == 0) { retornar verdadero }
     sea prev = tk["textos"][i - 1]
-    retornar tk["tipos"][i - 1] != "op" o tiene_clave(SEPARADORES, prev) == falso
+    si (tk["tipos"][i - 1] != "op" o _es_separador(prev) == falso) { retornar verdadero }
+    // Método sobre el resultado de una llamada: algo(...).metodo(x)
+    si (i >= 2 y tk["tipos"][i - 2] == "op") {
+        sea p2 = tk["textos"][i - 2]
+        retornar p2 == ")" o p2 == "]" o p2 == "?" o p2 == "!"
+    }
+    retornar falso
 }
 
 // Índice del paréntesis/corchete/llave que cierra al de la posición i.
@@ -115,8 +132,80 @@ funcion _fin_sentencia(tk, i) {
     retornar n
 }
 
-// Identificadores (con puntos) dentro de ${…} o \(…) de un texto.
-funcion _cadenas_interpoladas(t) {
+// Identificadores (con puntos) interpolados en un texto según su estilo.
+funcion _cadenas_interpoladas(t, estilo) {
+    si (estilo == "llaves") { retornar _interp_delimitada(t, 123, 125, 1) }
+    si (estilo == "dolar") { retornar _interp_dolar(t) }
+    retornar _interp_clasica(t)
+}
+
+// Contenido entre abre/cierre ({…}), analizado como código.
+funcion _interp_delimitada(t, abre, cierra, salto) {
+    sea r = []
+    sea n = longitud(t)
+    sea i = 0
+    mientras (i < n) {
+        si (byte_en(t, i) == abre) {
+            si (i + 1 < n y byte_en(t, i + 1) == abre) {
+                i = i + 2
+                continuar
+            }
+            sea j = i + salto
+            mientras (j < n y byte_en(t, j) != cierra) { j = j + 1 }
+            _agregar_cadenas(r, subtexto(t, i + salto, j))
+            i = j
+        }
+        i = i + 1
+    }
+    retornar r
+}
+
+// Kotlin: $nombre y ${expr}. PHP: $nombre, {$expr} y ${nombre}.
+funcion _interp_dolar(t) {
+    sea r = []
+    sea n = longitud(t)
+    sea php = CONFIG["lenguaje"] == "php"
+    sea i = 0
+    mientras (i < n) {
+        sea b = byte_en(t, i)
+        si (b == 36 y i + 1 < n y byte_en(t, i + 1) == 123) {
+            sea j = i + 2
+            mientras (j < n y byte_en(t, j) != 125) { j = j + 1 }
+            sea interior = subtexto(t, i + 2, j)
+            si (php) { interior = "$" + interior }
+            _agregar_cadenas(r, interior)
+            i = j
+        } sino si (b == 123 y i + 1 < n y byte_en(t, i + 1) == 36) {
+            sea j = i + 1
+            mientras (j < n y byte_en(t, j) != 125) { j = j + 1 }
+            _agregar_cadenas(r, subtexto(t, i + 1, j))
+            i = j
+        } sino si (b == 36 y i + 1 < n y _es_letra(byte_en(t, i + 1))) {
+            sea j = i + 1
+            mientras (j < n y (_es_letra(byte_en(t, j)) o _es_digito(byte_en(t, j))) y byte_en(t, j) != 36) { j = j + 1 }
+            si (php) { agregar(r, subtexto(t, i, j)) } sino { agregar(r, subtexto(t, i + 1, j)) }
+            i = j - 1
+        }
+        i = i + 1
+    }
+    retornar r
+}
+
+funcion _agregar_cadenas(r, codigo) {
+    sea tk = lexico(codigo, CONFIG["lenguaje"])
+    sea k = 0
+    mientras (k < longitud(tk["tipos"])) {
+        si (_es_inicio_cadena(tk, k)) {
+            sea c = _cadena(tk, k)
+            agregar(r, c[0])
+            k = c[1]
+        }
+        k = k + 1
+    }
+}
+
+// JavaScript ${…} y Swift \(…)
+funcion _interp_clasica(t) {
     sea r = []
     sea n = longitud(t)
     sea i = 0
@@ -130,7 +219,7 @@ funcion _cadenas_interpoladas(t) {
             sea inicio = j
             mientras (j < n y byte_en(t, j) != 125 y byte_en(t, j) != 41) { j = j + 1 }
             sea interior = subtexto(t, inicio, j)
-            sea tk = lexico(interior)
+            sea tk = lexico(interior, CONFIG["lenguaje"])
             sea k = 0
             mientras (k < longitud(tk["tipos"])) {
                 si (_es_inicio_cadena(tk, k)) {
@@ -198,7 +287,7 @@ funcion _contaminado(tk, a, b, reglas, manchas) {
     k = a
     mientras (k < b y k < n) {
         si (tipos[k] == "texto" y tk["interp"][k]) {
-            para c en _cadenas_interpoladas(textos[k]) {
+            para c en _cadenas_interpoladas(textos[k], tk["estilos"][k]) {
                 si (_es_fuente_cadena(reglas, c)) { retornar c }
                 si (_manchado(manchas, _primer_segmento(c))) { retornar c }
             }
@@ -232,6 +321,34 @@ funcion _solo_literales(tk, a, b) {
     retornar verdadero
 }
 
+// Texto de la línea hasta el token k (para calificar llamadas encadenadas: new X().metodo()).
+funcion _contexto_linea(tk, k, nombre) {
+    sea partes = [nombre]
+    sea i = k - 1
+    mientras (i >= 0 y tk["lineas"][i] == tk["lineas"][k] y k - i < 40) {
+        agregar(partes, tk["textos"][i])
+        i = i - 1
+    }
+    retornar texto_unir(partes, " ")
+}
+
+// ¿La cadena contiene alguno de los textos separados por "|"?
+funcion _califica(nombre, calificador) {
+    para parte en texto_dividir(calificador, "|") {
+        si (texto_indice(nombre, parte) >= 0) { retornar verdadero }
+    }
+    retornar falso
+}
+
+funcion _rango_contiene(tk, a, b, texto) {
+    sea k = a
+    mientras (k < b) {
+        si (tk["textos"][k] == texto) { retornar verdadero }
+        k = k + 1
+    }
+    retornar falso
+}
+
 funcion _es_sql(t) {
     sea m = " " + texto_minusculas(t) + " "
     si (texto_indice(m, "select ") >= 0 y texto_indice(m, " from ") >= 0) { retornar verdadero }
@@ -249,9 +366,20 @@ funcion _sql_armado(tk, a, b) {
     sea k = a
     mientras (k < b) {
         si (tipos[k] == "texto" y _es_sql(textos[k])) {
+            sea cc = CONFIG["concat"]
             si (tk["interp"][k]) { retornar verdadero }
-            si (k + 1 < b y textos[k + 1] == "+" y tipos[k + 1] == "op") { retornar verdadero }
-            si (k > a y textos[k - 1] == "+" y tipos[k - 1] == "op") { retornar verdadero }
+            si (k + 1 < b y tipos[k + 1] == "op" y (textos[k + 1] == "+" o textos[k + 1] == cc)) { retornar verdadero }
+            si (k > a y tipos[k - 1] == "op" y (textos[k - 1] == "+" o textos[k - 1] == cc)) { retornar verdadero }
+            // Python: "… %s" % x
+            si (CONFIG["lenguaje"] == "python" y k + 1 < b y textos[k + 1] == "%") { retornar verdadero }
+            // "…".format(x) / "…".formatted(x)
+            si (k + 3 < b y textos[k + 1] == "." y (textos[k + 2] == "format" o textos[k + 2] == "formatted") y textos[k + 3] == "(") { retornar verdadero }
+            // Sprintf("… %s", x), String.format(…), format!("… {}", x), string.Format(…)
+            si (k >= 2 y textos[k - 1] == "(") {
+                sea f = textos[k - 2]
+                si (f == "!" y k >= 3) { f = textos[k - 3] }
+                si (tiene_clave(FORMATEADORES, f) y k + 1 < b y textos[k + 1] == ",") { retornar verdadero }
+            }
         }
         k = k + 1
     }
@@ -286,6 +414,24 @@ funcion _parece_ejemplo(t) {
     retornar falso
 }
 
+// Un valor con aspecto de credencial: mezcla letras y dígitos, alta entropía
+// y no es una palabra o nombre con guiones (Proxy-Authorization, bare-quoted).
+funcion _parece_credencial(t) {
+    sea n = longitud(t)
+    sea digitos = 0
+    sea letras = 0
+    sea otros = 0
+    sea i = 0
+    mientras (i < n) {
+        sea b = byte_en(t, i)
+        si (b >= 48 y b <= 57) { digitos = digitos + 1 } sino si ((b >= 65 y b <= 90) o (b >= 97 y b <= 122)) { letras = letras + 1 } sino si (b != 45 y b != 95) { otros = otros + 1 }
+        i = i + 1
+    }
+    si (digitos == 0 o letras == 0) { retornar falso }
+    si (digitos * 10 < n y otros == 0) { retornar falso }
+    retornar _entropia(t) >= 3.8
+}
+
 funcion _revisar_secretos(tk, lista, vistos) {
     sea textos = tk["textos"]
     sea tipos = tk["tipos"]
@@ -307,7 +453,11 @@ funcion _revisar_secretos(tk, lista, vistos) {
                     sea nombre = texto_minusculas(textos[k - 2])
                     sea sospechoso = falso
                     para w en PALABRAS_SECRETO { si (texto_indice(nombre, w) >= 0) { sospechoso = verdadero } }
-                    si (sospechoso y texto_indice(t, " ") < 0 y _entropia(t) >= 3.5) {
+                    // Nombres que describen el campo, no guardan su valor (token_type, auth_header…).
+                    para suf en ["type", "tipo", "name", "nombre", "header", "hdr", "url", "path", "ruta", "field", "campo", "label", "prefix", "kind", "format", "scheme", "method", "endpoint", "file"] {
+                        si (texto_termina_con(nombre, suf)) { sospechoso = falso }
+                    }
+                    si (sospechoso y texto_indice(t, " ") < 0 y _parece_credencial(t)) {
                         _hallazgo(lista, vistos, "secreto-expuesto", tk["lineas"][k], 0.75, "Valor con aspecto de credencial en '" + textos[k - 2] + "'", tk)
                     }
                 }
@@ -335,6 +485,35 @@ funcion _revisar_configuracion(tk, lenguaje, lista, vistos) {
             si (t == "SSL_VERIFY_NONE" o t == "CURLOPT_SSL_VERIFYPEER" y k + 2 < n y (textos[k + 2] == "0" o textos[k + 2] == "0L" o textos[k + 2] == "false")) {
                 _hallazgo(lista, vistos, "tls-desactivado", lineas[k], 0.85, t, tk)
             }
+            // Python verify=False, Go InsecureSkipVerify: true, Rust danger_accept_invalid_*(true)
+            si ((t == "verify" o t == "verify_ssl" o t == "ssl_verify") y k + 2 < n y (textos[k + 1] == "=" o textos[k + 1] == ":") y (textos[k + 2] == "False" o textos[k + 2] == "false")) {
+                _hallazgo(lista, vistos, "tls-desactivado", lineas[k], 0.9, t + "=" + textos[k + 2], tk)
+            }
+            si (t == "InsecureSkipVerify" y k + 2 < n y textos[k + 2] == "true") {
+                _hallazgo(lista, vistos, "tls-desactivado", lineas[k], 0.9, "InsecureSkipVerify: true", tk)
+            }
+            si ((t == "danger_accept_invalid_certs" o t == "danger_accept_invalid_hostnames") y k + 2 < n y textos[k + 2] == "true") {
+                _hallazgo(lista, vistos, "tls-desactivado", lineas[k], 0.9, t + "(true)", tk)
+            }
+            si (t == "NoopHostnameVerifier" o t == "ALLOW_ALL_HOSTNAME_VERIFIER" o t == "TrustAllCerts" o t == "trustAllCerts") {
+                _hallazgo(lista, vistos, "tls-desactivado", lineas[k], 0.8, t, tk)
+            }
+            si (t == "ServerCertificateCustomValidationCallback" o t == "ServerCertificateValidationCallback") {
+                sea fin = _fin_sentencia(tk, k)
+                si (_rango_contiene(tk, k, fin, "true")) { _hallazgo(lista, vistos, "tls-desactivado", lineas[k], 0.85, t + " siempre acepta", tk) }
+            }
+            // Java/Kotlin: MessageDigest.getInstance("MD5")
+            si (t == "getInstance" y k + 2 < n y tipos[k + 2] == "texto") {
+                sea alg = texto_minusculas(textos[k + 2])
+                si (alg == "md5" o alg == "sha1" o alg == "sha-1") { _hallazgo(lista, vistos, "hash-debil", lineas[k], 0.6, "getInstance(\"" + textos[k + 2] + "\")", tk) }
+            }
+            // Android: SharedPreferences.putString("token", …)
+            si ((lenguaje == "java" o lenguaje == "kotlin") y t == "putString" y k + 2 < n y tipos[k + 2] == "texto") {
+                sea m = texto_minusculas(textos[k + 2])
+                si (texto_indice(m, "token") >= 0 o texto_indice(m, "password") >= 0 o texto_indice(m, "secret") >= 0) {
+                    _hallazgo(lista, vistos, "almacenamiento-inseguro", lineas[k], 0.75, "SharedPreferences: " + textos[k + 2], tk)
+                }
+            }
             si (t == "NSAllowsArbitraryLoads" o t == "allowsArbitraryLoads") {
                 _hallazgo(lista, vistos, "ats-desactivado", lineas[k], 0.7, t, tk)
             }
@@ -346,7 +525,9 @@ funcion _revisar_configuracion(tk, lenguaje, lista, vistos) {
                 _hallazgo(lista, vistos, "hash-debil", lineas[k], 0.5, t, tk)
             }
             // Aleatorio no criptográfico para valores de seguridad.
-            si ((t == "random" y k >= 2 y textos[k - 2] == "Math") o t == "rand" o t == "aleatorio" o t == "aleatorio_entero") {
+            // "rand" como método (config.rand()) o el paquete crypto/rand de Go no son inseguros.
+            sea es_rand = t == "rand" y (k == 0 o textos[k - 1] != ".") y CONFIG["crypto_rand"] == falso
+            si ((t == "random" y ((k >= 2 y textos[k - 2] == "Math") o (k + 1 < n y textos[k + 1] == "."))) o es_rand o t == "mt_rand" o t == "randint" o t == "aleatorio" o t == "aleatorio_entero" o (t == "Random" y k >= 1 y textos[k - 1] == "new")) {
                 sea fin = _fin_sentencia(tk, k)
                 sea ini = k
                 mientras (ini > 0 y lineas[ini - 1] == lineas[k]) { ini = ini - 1 }
@@ -407,13 +588,21 @@ funcion _revisar_flujo(tk, lenguaje, lista, vistos) {
         si (lenguaje == "cpp" y tipos[k] == "op" y textos[k] == ">>" y k >= 1 y (textos[k - 1] == "cin") y k + 1 < n y tipos[k + 1] == "id") {
             manchas[textos[k + 1]] = verdadero
         }
-        // Asignación con "=".
-        si (tipos[k] == "op" y textos[k] == "=" y k >= 1) {
+        // Asignación con "=" o ":=" (Go).
+        si (tipos[k] == "op" y (textos[k] == "=" o textos[k] == ":=") y k >= 1) {
             sea fin = _fin_sentencia(tk, k + 1)
             sea origen = _contaminado(tk, k + 1, fin, reglas, manchas)
             // Objetivos: x =, obj.prop =, let x: T =, { a, b } =, [a, b] =
             sea objetivos = []
             sea j = k - 1
+            // let/val/var x: Tipo<Generico> = …  → el objetivo es x
+            sea d = k - 1
+            mientras (d >= 0 y lineas[d] == lineas[k] y (tipos[d] != "id" o tiene_clave(DECLARACIONES, textos[d]) == falso)) { d = d - 1 }
+            si (d >= 0 y lineas[d] == lineas[k] y tiene_clave(DECLARACIONES, textos[d]) y d + 1 < k) {
+                sea cand = d + 1
+                si (textos[cand] == "mut" y cand + 1 < k) { cand = cand + 1 }
+                si (tipos[cand] == "id" y cand + 1 < k y (textos[cand + 1] == ":" o textos[cand + 1] == "=" o textos[cand + 1] == ":=")) { j = cand }
+            }
             si (textos[j] == "}" o textos[j] == "]") {
                 sea abre = "{"
                 si (textos[j] == "]") { abre = "[" }
@@ -432,12 +621,12 @@ funcion _revisar_flujo(tk, lenguaje, lista, vistos) {
                 si (tipos[j] == "id") {
                     // Inicio de la cadena (obj.prop.sub)
                     sea ini = j
-                    mientras (ini >= 2 y tipos[ini - 1] == "op" y tiene_clave(SEPARADORES, textos[ini - 1]) y tipos[ini - 2] == "id") { ini = ini - 2 }
+                    mientras (ini >= 2 y tipos[ini - 1] == "op" y _es_separador(textos[ini - 1]) y tipos[ini - 2] == "id") { ini = ini - 2 }
                     sea c = _cadena(tk, ini)
                     sea nombre = c[0]
                     sea prop = _ultimo_segmento(nombre)
                     sea es_propiedad = ini != j o texto_indice(nombre, ".") >= 0
-                    si (ini >= 1 y tipos[ini - 1] == "op" y tiene_clave(SEPARADORES, textos[ini - 1])) {
+                    si (ini >= 1 y tipos[ini - 1] == "op" y _es_separador(textos[ini - 1])) {
                         es_propiedad = verdadero
                         nombre = "…." + nombre
                     }
@@ -458,8 +647,32 @@ funcion _revisar_flujo(tk, lenguaje, lista, vistos) {
                     }
                 }
             }
+            // SQL armado con un dato externo y guardado en una variable.
+            si (origen != nulo y longitud(objetivos) > 0 y _sql_armado(tk, k + 1, fin)) {
+                _hallazgo(lista, vistos, "inyeccion-sql", lineas[k], 0.85, objetivos[0] + ": SQL con " + origen, tk)
+            }
             para o en objetivos {
                 si (origen != nulo) { manchas[o] = verdadero } sino { manchas[o] = falso }
+            }
+        }
+        // PHP: echo / print / include sin paréntesis obligatorios.
+        si (lenguaje == "php" y tipos[k] == "id") {
+            sea t = textos[k]
+            si (t == "echo" o t == "print") {
+                sea fin = _fin_sentencia(tk, k + 1)
+                sea origen = _contaminado(tk, k + 1, fin, reglas, manchas)
+                si (origen != nulo) { _hallazgo(lista, vistos, "xss", lineas[k], 0.85, t + " " + origen, tk) }
+            }
+            si (t == "include" o t == "include_once" o t == "require" o t == "require_once") {
+                sea fin = _fin_sentencia(tk, k + 1)
+                sea origen = _contaminado(tk, k + 1, fin, reglas, manchas)
+                si (origen != nulo) {
+                    _hallazgo(lista, vistos, "inclusion-archivos", lineas[k], 0.9, t + " " + origen, tk)
+                } sino {
+                    si (_solo_literales(tk, k + 1, fin) == falso y _rango_contiene(tk, k + 1, fin, "__DIR__") == falso) {
+                        _hallazgo(lista, vistos, "inclusion-archivos", lineas[k], 0.4, t + " con una ruta armada", tk)
+                    }
+                }
             }
         }
         // Llamadas.
@@ -473,10 +686,22 @@ funcion _revisar_flujo(tk, lenguaje, lista, vistos) {
                 sea cierre = _cierre(tk, abre)
                 sea fn = _ultimo_segmento(nombre)
                 sea es_sumidero = tiene_clave(sumideros, fn)
-                si (es_sumidero y longitud(sumideros[fn]) > 2 y texto_indice(nombre, sumideros[fn][2]) < 0) { es_sumidero = falso }
+                si (es_sumidero y longitud(sumideros[fn]) > 2 y sumideros[fn][2] != "" y _califica(_contexto_linea(tk, k, nombre), sumideros[fn][2]) == falso) { es_sumidero = falso }
+                si (es_sumidero y longitud(sumideros[fn]) > 3 y _rango_contiene(tk, abre + 1, cierre, sumideros[fn][3])) { es_sumidero = falso }
+                // C++, Java, C#, JS, PHP: "nombre(...) {" es una declaración, no una llamada.
+                si (es_sumidero y tiene_clave(SALTAR_DECLARACION, lenguaje) y cierre + 1 < n y textos[cierre + 1] == "{") { es_sumidero = falso }
                 si (es_sumidero) {
                     sea regla = sumideros[fn][0]
                     sea modo = sumideros[fn][1]
+                    // PHP: $pdo->exec($sql) es SQL, exec($cmd) es un comando.
+                    si (lenguaje == "php" y fn == "exec" y texto_indice(nombre, ".") >= 0) {
+                        regla = "inyeccion-sql"
+                        modo = "sql"
+                    }
+                    // Python subprocess: solo es grave con shell=True o un texto armado.
+                    si (modo == "subproceso") {
+                        si (_rango_contiene(tk, abre + 1, cierre, "shell")) { modo = "armado" } sino { modo = "dato" }
+                    }
                     sea origen = _contaminado(tk, abre + 1, cierre, reglas, manchas)
                     si (modo == "dato" y origen != nulo) {
                         _hallazgo(lista, vistos, regla, lineas[k], 0.9, fn + "(" + origen + ")", tk)
@@ -565,7 +790,7 @@ funcion _revisar_sql_en_variables(tk, lenguaje, lista, vistos) {
     sea manchas = {}
     sea k = 0
     mientras (k < n) {
-        si (tipos[k] == "op" y textos[k] == "=" y k >= 1 y tipos[k - 1] == "id") {
+        si (tipos[k] == "op" y (textos[k] == "=" o textos[k] == ":=") y k >= 1 y tipos[k - 1] == "id") {
             sea fin = _fin_sentencia(tk, k + 1)
             si (_contaminado(tk, k + 1, fin, reglas, manchas) != nulo) { manchas[textos[k - 1]] = verdadero }
             si (_sql_armado(tk, k + 1, fin)) {
@@ -605,7 +830,11 @@ funcion analizar_texto(txt, lenguaje) {
         retornar lista
     }
     sea vistos = {}
-    sea tk = lexico(txt)
+    CONFIG["lenguaje"] = lenguaje
+    CONFIG["concat"] = "+"
+    si (lenguaje == "php") { CONFIG["concat"] = "." }
+    CONFIG["crypto_rand"] = lenguaje == "go" y texto_indice(txt, "\"crypto/rand\"") >= 0 y texto_indice(txt, "\"math/rand") < 0
+    sea tk = lexico(txt, lenguaje)
     _revisar_secretos(tk, lista, vistos)
     _revisar_configuracion(tk, lenguaje, lista, vistos)
     _revisar_flujo(tk, lenguaje, lista, vistos)

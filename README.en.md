@@ -2,7 +2,23 @@
 
 [🇪🇸 Español](README.md) · 🇬🇧 English
 
-**Vemoris Software's own** security reviewer, written 100% in **C-Forge**. It reviews **C++, Swift, JavaScript/TypeScript and C-Forge** code without depending on any external service: no AI APIs, your code never leaves your machine, and there's no per-review cost.
+**Vemoris Software's own** security reviewer, written 100% in **C-Forge**. It reviews code in **11 languages** without depending on any external service: no AI APIs, your code never leaves your machine, and there's no per-review cost.
+
+## Languages
+
+| Language | Files |
+|---|---|
+| C-Forge | `.cfv` |
+| JavaScript / TypeScript | `.js` `.mjs` `.cjs` `.jsx` `.ts` `.tsx` `.vue` `.svelte` |
+| Swift | `.swift` (+ `Info.plist`) |
+| C / C++ / Objective-C | `.c` `.cpp` `.cc` `.h` `.hpp` `.m` `.mm` |
+| Python | `.py` |
+| Go | `.go` |
+| Rust | `.rs` |
+| C# | `.cs` |
+| PHP | `.php` `.phtml` |
+| Java | `.java` |
+| Kotlin | `.kt` `.kts` |
 
 ## What it detects
 
@@ -17,6 +33,8 @@
 | 🟠 `ssrf` | `fetch(req.query.url)` |
 | 🟠 `codigo-dinamico` (dynamic code) | `eval(...)`, `new Function(...)` |
 | 🟠 `cadena-formato` (format string) | `printf(argv[1])` |
+| 🟠 `deserializacion-insegura` (insecure deserialization) | `pickle.loads(...)`, `unserialize(...)`, `BinaryFormatter`, `ObjectInputStream` |
+| 🔴 `inclusion-archivos` (file inclusion) | `include $_GET['page']` (PHP) |
 | 🟠 `tls-desactivado` (TLS disabled) | `rejectUnauthorized: false`, `CURLOPT_SSL_VERIFYPEER, 0` |
 | 🟡 open redirect, insecure random, insecure storage, ATS disabled | |
 | 🔵 weak hash, dynamic regex | |

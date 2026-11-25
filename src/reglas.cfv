@@ -123,6 +123,20 @@ sea REGLAS = {
         "arreglo_es": "Escapa el texto antes de usarlo en la regex o limita su largo.",
         "arreglo_en": "Escape the text before using it in the regex or limit its length."
     },
+    "deserializacion-insegura": {
+        "severidad": "alta",
+        "es": "Se deserializan datos con un formato que puede ejecutar código (pickle, BinaryFormatter, ObjectInputStream, unserialize, yaml.load).",
+        "en": "Data is deserialized with a format that can execute code (pickle, BinaryFormatter, ObjectInputStream, unserialize, yaml.load).",
+        "arreglo_es": "Usa JSON o un formato sin ejecución de código; en YAML usa safe_load / SafeLoader.",
+        "arreglo_en": "Use JSON or a format without code execution; for YAML use safe_load / SafeLoader."
+    },
+    "inclusion-archivos": {
+        "severidad": "critica",
+        "es": "Se incluye un archivo PHP cuya ruta viene del usuario: permite ejecutar código del atacante.",
+        "en": "A PHP file is included from a user-controlled path: allows running attacker code.",
+        "arreglo_es": "Incluye solo archivos de una lista fija; nunca armes la ruta con datos de la petición.",
+        "arreglo_en": "Only include files from a fixed list; never build the path from request data."
+    },
     "ats-desactivado": {
         "severidad": "media",
         "es": "App Transport Security permite conexiones HTTP sin cifrar.",
@@ -203,9 +217,126 @@ sea LENGUAJES = {
             "http_get": ["ssrf", "dato"], "http_post": ["ssrf", "dato"], "http_delete": ["ssrf", "dato"], "net_conectar": ["ssrf", "dato"]
         },
         "asignaciones": {}
+    },
+    "python": {
+        "nombre": "Python",
+        "fuentes": ["request.args", "request.form", "request.values", "request.json", "request.data", "request.files", "request.cookies", "request.headers", "request.get_json", "request.GET", "request.POST", "request.body", "request.query_params", "request.path_params", "request.FILES", "request.COOKIES", "request.META", "sys.argv", "event.body"],
+        "llamadas_fuente": ["input"],
+        "limpiadores": ["int", "float", "bool", "escape", "quote", "secure_filename", "clean", "validate", "basename", "UUID"],
+        "sumideros": {
+            "system": ["inyeccion-comandos", "armado", "os"], "popen": ["inyeccion-comandos", "armado"],
+            "run": ["inyeccion-comandos", "subproceso", "subprocess"], "call": ["inyeccion-comandos", "subproceso", "subprocess"],
+            "Popen": ["inyeccion-comandos", "subproceso"], "check_output": ["inyeccion-comandos", "subproceso"], "check_call": ["inyeccion-comandos", "subproceso"],
+            "eval": ["codigo-dinamico", "armado"], "exec": ["codigo-dinamico", "armado"], "render_template_string": ["codigo-dinamico", "dato"],
+            "execute": ["inyeccion-sql", "sql"], "executemany": ["inyeccion-sql", "sql"], "executescript": ["inyeccion-sql", "sql"], "raw": ["inyeccion-sql", "sql"], "text": ["inyeccion-sql", "sql"], "extra": ["inyeccion-sql", "sql"],
+            "open": ["recorrido-rutas", "dato"], "send_file": ["recorrido-rutas", "dato"], "FileResponse": ["recorrido-rutas", "dato"], "remove": ["recorrido-rutas", "dato", "os"],
+            "get": ["ssrf", "dato", "requests|httpx|session|client"], "post": ["ssrf", "dato", "requests|httpx|session|client"], "urlopen": ["ssrf", "dato"],
+            "redirect": ["redireccion-abierta", "dato"], "HttpResponseRedirect": ["redireccion-abierta", "dato"],
+            "Markup": ["xss", "dato"], "mark_safe": ["xss", "dato"],
+            "loads": ["deserializacion-insegura", "armado", "pickle|marshal|dill"], "load": ["deserializacion-insegura", "siempre", "pickle|marshal|yaml|dill", "SafeLoader"]
+        },
+        "asignaciones": {}
+    },
+    "go": {
+        "nombre": "Go",
+        "fuentes": ["r.URL", "r.Form", "r.PostForm", "r.Header", "r.Body", "r.MultipartForm", "req.URL", "req.Form", "req.Header", "req.Body", "os.Args", "c.Query", "c.Param", "c.PostForm", "c.DefaultQuery", "c.GetHeader", "c.QueryParam", "c.FormValue", "c.Params", "mux.Vars"],
+        "llamadas_fuente": ["FormValue", "PostFormValue", "Vars"],
+        "limpiadores": ["Atoi", "ParseInt", "ParseFloat", "ParseBool", "QuoteMeta", "EscapeString", "HTMLEscapeString", "Base", "Validate"],
+        "sumideros": {
+            "Command": ["inyeccion-comandos", "dato", "exec"], "CommandContext": ["inyeccion-comandos", "dato", "exec"],
+            "Query": ["inyeccion-sql", "sql"], "QueryRow": ["inyeccion-sql", "sql"], "Exec": ["inyeccion-sql", "sql"], "QueryContext": ["inyeccion-sql", "sql"],
+            "ExecContext": ["inyeccion-sql", "sql"], "QueryRowContext": ["inyeccion-sql", "sql"], "Prepare": ["inyeccion-sql", "sql"], "Raw": ["inyeccion-sql", "sql"], "Where": ["inyeccion-sql", "sql"],
+            "Open": ["recorrido-rutas", "dato"], "ReadFile": ["recorrido-rutas", "dato"], "WriteFile": ["recorrido-rutas", "dato"], "Create": ["recorrido-rutas", "dato", "os"],
+            "Remove": ["recorrido-rutas", "dato", "os"], "ServeFile": ["recorrido-rutas", "dato"],
+            "Get": ["ssrf", "dato", "http|client"], "Post": ["ssrf", "dato", "http|client"], "NewRequest": ["ssrf", "dato"],
+            "Redirect": ["redireccion-abierta", "dato"], "HTML": ["xss", "dato", "template"]
+        },
+        "asignaciones": {}
+    },
+    "rust": {
+        "nombre": "Rust",
+        "fuentes": ["env.args", "std.env.args", "req.query_string", "req.match_info", "web.Query", "web.Form", "web.Path", "web.Json"],
+        "llamadas_fuente": ["args", "query_string"],
+        "limpiadores": ["parse", "escape", "encode", "sanitize", "validate"],
+        "sumideros": {
+            "new": ["inyeccion-comandos", "dato", "Command"], "arg": ["inyeccion-comandos", "dato"], "args": ["inyeccion-comandos", "dato"],
+            "query": ["inyeccion-sql", "sql"], "query_as": ["inyeccion-sql", "sql"], "execute": ["inyeccion-sql", "sql"], "sql_query": ["inyeccion-sql", "sql"], "raw_sql": ["inyeccion-sql", "sql"],
+            "read_to_string": ["recorrido-rutas", "dato"], "open": ["recorrido-rutas", "dato", "File"], "create": ["recorrido-rutas", "dato", "File"], "write": ["recorrido-rutas", "dato", "fs"], "remove_file": ["recorrido-rutas", "dato"],
+            "get": ["ssrf", "dato", "reqwest|client"], "post": ["ssrf", "dato", "reqwest|client"]
+        },
+        "asignaciones": {}
+    },
+    "csharp": {
+        "nombre": "C#",
+        "fuentes": ["Request.Query", "Request.Form", "Request.Cookies", "Request.Headers", "Request.QueryString", "Request.Params", "Request.Body", "Request.RouteValues", "HttpContext.Request", "context.Request"],
+        "llamadas_fuente": ["ReadLine"],
+        "limpiadores": ["Parse", "TryParse", "HtmlEncode", "UrlEncode", "JavaScriptStringEncode", "Encode", "GetFileName", "Escape", "Sanitize", "Validate"],
+        "sumideros": {
+            "Start": ["inyeccion-comandos", "armado", "Process"], "ProcessStartInfo": ["inyeccion-comandos", "dato"],
+            "SqlCommand": ["inyeccion-sql", "sql"], "ExecuteSqlRaw": ["inyeccion-sql", "sql"], "FromSqlRaw": ["inyeccion-sql", "sql"], "ExecuteSqlCommand": ["inyeccion-sql", "sql"],
+            "SqlQueryRaw": ["inyeccion-sql", "sql"], "Query": ["inyeccion-sql", "sql"], "Execute": ["inyeccion-sql", "sql"], "OleDbCommand": ["inyeccion-sql", "sql"], "NpgsqlCommand": ["inyeccion-sql", "sql"], "MySqlCommand": ["inyeccion-sql", "sql"],
+            "Raw": ["xss", "dato", "Html"], "Write": ["xss", "dato", "Response"],
+            "ReadAllText": ["recorrido-rutas", "dato"], "ReadAllBytes": ["recorrido-rutas", "dato"], "WriteAllText": ["recorrido-rutas", "dato"], "Open": ["recorrido-rutas", "dato", "File"],
+            "Delete": ["recorrido-rutas", "dato", "File"], "PhysicalFile": ["recorrido-rutas", "dato"], "FileStream": ["recorrido-rutas", "dato"],
+            "Redirect": ["redireccion-abierta", "dato"],
+            "GetAsync": ["ssrf", "dato"], "GetStringAsync": ["ssrf", "dato"], "PostAsync": ["ssrf", "dato"], "SendAsync": ["ssrf", "dato"],
+            "Deserialize": ["deserializacion-insegura", "siempre", "BinaryFormatter|SoapFormatter|NetDataContract|LosFormatter|formatter"]
+        },
+        "asignaciones": {"CommandText": "inyeccion-sql", "FileName": "inyeccion-comandos", "Arguments": "inyeccion-comandos"}
+    },
+    "php": {
+        "nombre": "PHP",
+        "fuentes": ["$_GET", "$_POST", "$_REQUEST", "$_COOKIE", "$_FILES", "$_SERVER", "$request.input", "$request.get", "$request.query", "$request.post", "$request.all", "$request.cookie", "$request.header", "$request.route"],
+        "llamadas_fuente": ["file_get_contents_input", "filter_input_raw"],
+        "limpiadores": ["intval", "floatval", "boolval", "htmlspecialchars", "htmlentities", "escapeshellarg", "escapeshellcmd", "real_escape_string", "mysqli_real_escape_string", "basename", "filter_var", "filter_input", "strip_tags", "e", "quote", "validate"],
+        "sumideros": {
+            "system": ["inyeccion-comandos", "armado"], "exec": ["inyeccion-comandos", "armado"], "shell_exec": ["inyeccion-comandos", "armado"], "passthru": ["inyeccion-comandos", "armado"],
+            "popen": ["inyeccion-comandos", "armado"], "proc_open": ["inyeccion-comandos", "armado"], "pcntl_exec": ["inyeccion-comandos", "dato"],
+            "eval": ["codigo-dinamico", "armado"], "assert": ["codigo-dinamico", "dato"], "create_function": ["codigo-dinamico", "armado"],
+            "mysqli_query": ["inyeccion-sql", "sql"], "mysql_query": ["inyeccion-sql", "sql"], "pg_query": ["inyeccion-sql", "sql"], "query": ["inyeccion-sql", "sql"], "prepare": ["inyeccion-sql", "sql"],
+            "select": ["inyeccion-sql", "sql"], "statement": ["inyeccion-sql", "sql"], "whereRaw": ["inyeccion-sql", "sql"], "selectRaw": ["inyeccion-sql", "sql"], "orderByRaw": ["inyeccion-sql", "sql"], "raw": ["inyeccion-sql", "sql"], "unprepared": ["inyeccion-sql", "sql"],
+            "file_get_contents": ["recorrido-rutas", "dato"], "fopen": ["recorrido-rutas", "dato"], "readfile": ["recorrido-rutas", "dato"], "file_put_contents": ["recorrido-rutas", "dato"],
+            "unlink": ["recorrido-rutas", "dato"], "file": ["recorrido-rutas", "dato"], "move_uploaded_file": ["recorrido-rutas", "dato"],
+            "curl_init": ["ssrf", "dato"], "header": ["redireccion-abierta", "dato"],
+            "unserialize": ["deserializacion-insegura", "dato"]
+        },
+        "asignaciones": {}
+    },
+    "java": {
+        "nombre": "Java",
+        "fuentes": ["request.getParameter", "request.getParameterValues", "request.getParameterMap", "request.getHeader", "request.getCookies", "request.getQueryString", "request.getInputStream", "request.getReader", "request.getPathInfo", "req.getParameter", "req.getHeader", "req.getQueryString"],
+        "llamadas_fuente": ["nextLine", "readLine", "getParameter"],
+        "limpiadores": ["parseInt", "parseLong", "parseDouble", "valueOf", "escapeHtml4", "escapeHtml", "escapeSql", "encode", "encodeForHTML", "encodeForSQL", "getName", "quote", "validate", "sanitize"],
+        "sumideros": {
+            "exec": ["inyeccion-comandos", "armado"], "ProcessBuilder": ["inyeccion-comandos", "dato"], "command": ["inyeccion-comandos", "dato"],
+            "executeQuery": ["inyeccion-sql", "sql"], "executeUpdate": ["inyeccion-sql", "sql"], "execute": ["inyeccion-sql", "sql"], "prepareStatement": ["inyeccion-sql", "sql"],
+            "createQuery": ["inyeccion-sql", "sql"], "createNativeQuery": ["inyeccion-sql", "sql"], "addBatch": ["inyeccion-sql", "sql"], "query": ["inyeccion-sql", "sql"],
+            "queryForObject": ["inyeccion-sql", "sql"], "queryForList": ["inyeccion-sql", "sql"], "update": ["inyeccion-sql", "sql"],
+            "println": ["xss", "dato", "getWriter|out.|writer"], "print": ["xss", "dato", "getWriter|writer"], "write": ["xss", "dato", "getWriter|writer"],
+            "File": ["recorrido-rutas", "dato"], "FileInputStream": ["recorrido-rutas", "dato"], "FileReader": ["recorrido-rutas", "dato"], "FileOutputStream": ["recorrido-rutas", "dato"],
+            "get": ["recorrido-rutas", "dato", "Paths|Path"], "of": ["recorrido-rutas", "dato", "Path"], "readAllBytes": ["recorrido-rutas", "dato"], "readString": ["recorrido-rutas", "dato"],
+            "sendRedirect": ["redireccion-abierta", "dato"], "URL": ["ssrf", "dato"], "URI": ["ssrf", "dato"],
+            "ObjectInputStream": ["deserializacion-insegura", "dato"], "XMLDecoder": ["deserializacion-insegura", "dato"], "readObject": ["deserializacion-insegura", "siempre"]
+        },
+        "asignaciones": {}
+    },
+    "kotlin": {
+        "nombre": "Kotlin",
+        "fuentes": ["request.getParameter", "request.getHeader", "request.queryString", "call.parameters", "call.request", "call.receiveText", "call.receiveParameters", "call.receive", "intent.getStringExtra", "intent.data", "intent.extras"],
+        "llamadas_fuente": ["readLine", "readln", "getStringExtra"],
+        "limpiadores": ["toInt", "toIntOrNull", "toLong", "toLongOrNull", "escapeHtml", "encode", "sanitize", "validate", "quote"],
+        "sumideros": {
+            "exec": ["inyeccion-comandos", "armado"], "ProcessBuilder": ["inyeccion-comandos", "dato"], "command": ["inyeccion-comandos", "dato"],
+            "rawQuery": ["inyeccion-sql", "sql"], "execSQL": ["inyeccion-sql", "sql"], "executeQuery": ["inyeccion-sql", "sql"], "executeUpdate": ["inyeccion-sql", "sql"],
+            "execute": ["inyeccion-sql", "sql"], "prepareStatement": ["inyeccion-sql", "sql"], "createQuery": ["inyeccion-sql", "sql"], "query": ["inyeccion-sql", "sql"], "exec_sql": ["inyeccion-sql", "sql"],
+            "loadData": ["xss", "dato"], "loadDataWithBaseURL": ["xss", "dato"], "evaluateJavascript": ["xss", "armado"], "loadUrl": ["xss", "dato"], "respondText": ["xss", "dato"],
+            "File": ["recorrido-rutas", "dato"], "readText": ["recorrido-rutas", "dato", "File"], "FileInputStream": ["recorrido-rutas", "dato"],
+            "URL": ["ssrf", "dato"], "get": ["ssrf", "dato", "client"], "respondRedirect": ["redireccion-abierta", "dato"],
+            "ObjectInputStream": ["deserializacion-insegura", "dato"]
+        },
+        "asignaciones": {}
     }
 }
-
 // Prefijos de claves conocidas (todas las plataformas).
 sea PREFIJOS_SECRETOS = [
     ["AKIA", 20, "AWS"], ["ASIA", 20, "AWS"], ["ghp_", 40, "GitHub"], ["gho_", 40, "GitHub"], ["ghs_", 40, "GitHub"],
@@ -224,6 +355,13 @@ funcion lenguaje_de(ruta) {
     si (ext == ".swift") { retornar "swift" }
     si (ext == ".cpp" o ext == ".cc" o ext == ".cxx" o ext == ".c" o ext == ".h" o ext == ".hpp" o ext == ".hh" o ext == ".hxx" o ext == ".mm" o ext == ".m") { retornar "cpp" }
     si (ext == ".cfv") { retornar "cforge" }
+    si (ext == ".py" o ext == ".pyw") { retornar "python" }
+    si (ext == ".go") { retornar "go" }
+    si (ext == ".rs") { retornar "rust" }
+    si (ext == ".cs") { retornar "csharp" }
+    si (ext == ".php" o ext == ".phtml") { retornar "php" }
+    si (ext == ".java") { retornar "java" }
+    si (ext == ".kt" o ext == ".kts") { retornar "kotlin" }
     si (ext == ".plist") { retornar "plist" }
     retornar nulo
 }

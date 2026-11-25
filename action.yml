@@ -1,5 +1,5 @@
 name: Vemoris Security Review
-description: Revisión de seguridad propia de Vemoris para C++, Swift, JavaScript/TypeScript y C-Forge. Sin servicios externos. / Vemoris' own security review for C++, Swift, JS/TS and C-Forge. No external services.
+description: Revisión de seguridad propia de Vemoris para 11 lenguajes (C-Forge, JS/TS, Swift, C/C++, Python, Go, Rust, C#, PHP, Java, Kotlin). Sin servicios externos. / Vemoris' own security review for 11 languages. No external services.
 author: Vemoris Software
 branding:
   icon: shield
@@ -7,7 +7,7 @@ branding:
 inputs:
   version:
     description: Versión de VSR / VSR version
-    default: "0.1.0"
+    default: "0.2.0"
   ruta:
     description: Carpeta a revisar / Folder to scan
     default: "."

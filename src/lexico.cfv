@@ -1,5 +1,5 @@
-// lexico.cfv — Analizador léxico para lenguajes con sintaxis tipo C:
-// C++, Swift, JavaScript, TypeScript y C-Forge.
+// lexico.cfv — Analizador léxico para C++, Swift, JavaScript/TypeScript,
+// C-Forge, Python, Go, Rust, C#, PHP, Java y Kotlin.
 //
 // Devuelve un mapa con listas paralelas (más rápido que una lista de mapas):
 //   tipos:  "id" | "num" | "texto" | "op"
@@ -25,21 +25,23 @@ funcion _es_espacio(b) {
 funcion _op_largo(txt, i, n) {
     si (i + 2 < n) {
         sea t3 = subtexto(txt, i, i + 3)
-        si (t3 == "===" o t3 == "!==" o t3 == "..." o t3 == "<<=" o t3 == ">>=" o t3 == "?.(") { retornar 3 }
+        si (t3 == "===" o t3 == "!==" o t3 == "..." o t3 == "<<=" o t3 == ">>=" o t3 == "?.(" o t3 == "?->") { retornar 3 }
     }
     si (i + 1 < n) {
         sea t2 = subtexto(txt, i, i + 2)
-        si (t2 == "==" o t2 == "!=" o t2 == "<=" o t2 == ">=" o t2 == "&&" o t2 == "||" o t2 == "+=" o t2 == "-=" o t2 == "->" o t2 == "=>" o t2 == "::" o t2 == "?." o t2 == "??" o t2 == "<<" o t2 == ">>" o t2 == "++" o t2 == "--") { retornar 2 }
+        si (t2 == ":=" o t2 == "==" o t2 == "!=" o t2 == "<=" o t2 == ">=" o t2 == "&&" o t2 == "||" o t2 == "+=" o t2 == "-=" o t2 == "->" o t2 == "=>" o t2 == "::" o t2 == "?." o t2 == "??" o t2 == "<<" o t2 == ">>" o t2 == "++" o t2 == "--") { retornar 2 }
     }
     retornar 1
 }
 
-funcion lexico(txt) {
+funcion lexico(txt, lenguaje) {
     sea tipos = []
     sea textos = []
     sea lineas = []
     sea interp = []
+    sea estilos = []
     sea ignorar = {}
+    sea comentario_hash = lenguaje == "python" o lenguaje == "php"
     sea n = longitud(txt)
     sea i = 0
     sea linea = 1
@@ -51,6 +53,24 @@ funcion lexico(txt) {
             continuar
         }
         si (_es_espacio(b)) {
+            i = i + 1
+            continuar
+        }
+        // Comentario de línea # (Python, PHP). En PHP, #[ es un atributo.
+        si (comentario_hash y b == 35 y (lenguaje != "php" o i + 1 >= n o byte_en(txt, i + 1) != 91)) {
+            sea fin = texto_indice_desde(txt, "\n", i)
+            si (fin < 0) { fin = n }
+            si (texto_indice(subtexto(txt, i, fin), "vsr:ignorar") >= 0) { ignorar[numero_a_texto(linea)] = verdadero }
+            i = fin
+            continuar
+        }
+        // Rust: lifetimes ('a, 'static) no son textos.
+        si (lenguaje == "rust" y b == 39 y i + 2 < n y _es_letra(byte_en(txt, i + 1)) y byte_en(txt, i + 2) != 39) {
+            agregar(tipos, "op")
+            agregar(textos, "'")
+            agregar(lineas, linea)
+            agregar(interp, falso)
+            agregar(estilos, "")
             i = i + 1
             continuar
         }
@@ -80,7 +100,24 @@ funcion lexico(txt) {
         si (b == 34 o b == 39 o b == 96) {
             sea inicio_linea = linea
             sea triple = falso
-            si (b == 34 y i + 2 < n y byte_en(txt, i + 1) == 34 y byte_en(txt, i + 2) == 34) { triple = verdadero }
+            si ((b == 34 o (b == 39 y lenguaje == "python")) y i + 2 < n y byte_en(txt, i + 1) == b y byte_en(txt, i + 2) == b) { triple = verdadero }
+            // Estilo de interpolación según el lenguaje y el prefijo del texto.
+            sea estilo = ""
+            si (lenguaje == "js" y b == 96) { estilo = "dolar_llave" }
+            si (lenguaje == "swift" y b == 34) { estilo = "barra" }
+            si ((lenguaje == "kotlin" o lenguaje == "php") y b == 34) { estilo = "dolar" }
+            si (lenguaje == "python" y i >= 1) {
+                sea p1 = byte_en(txt, i - 1)
+                sea p2 = 0
+                si (i >= 2) { p2 = byte_en(txt, i - 2) }
+                si (p1 == 102 o p1 == 70 o ((p1 == 114 o p1 == 82) y (p2 == 102 o p2 == 70))) { estilo = "llaves" }
+            }
+            si (lenguaje == "csharp" y i >= 1) {
+                sea p1 = byte_en(txt, i - 1)
+                sea p2 = 0
+                si (i >= 2) { p2 = byte_en(txt, i - 2) }
+                si (p1 == 36 o (p1 == 64 y p2 == 36)) { estilo = "llaves" }
+            }
             sea j = i + 1
             si (triple) { j = i + 3 }
             sea tiene_interp = falso
@@ -88,18 +125,21 @@ funcion lexico(txt) {
                 sea c = byte_en(txt, j)
                 si (c == 92) {
                     // \( interpolación de Swift
-                    si (j + 1 < n y byte_en(txt, j + 1) == 40) { tiene_interp = verdadero }
+                    si (estilo == "barra" y j + 1 < n y byte_en(txt, j + 1) == 40) { tiene_interp = verdadero }
                     j = j + 2
                     continuar
                 }
+                si (estilo == "llaves" y c == 123 y j + 1 < n y byte_en(txt, j + 1) != 123) { tiene_interp = verdadero }
+                si (estilo == "dolar" y c == 36 y j + 1 < n y (_es_letra(byte_en(txt, j + 1)) o byte_en(txt, j + 1) == 123)) { tiene_interp = verdadero }
+                si (estilo == "dolar" y c == 123 y j + 1 < n y byte_en(txt, j + 1) == 36) { tiene_interp = verdadero }
                 si (c == 10) {
                     linea = linea + 1
                     // Los textos normales no cruzan líneas (salvo ` y """).
                     si (b != 96 y triple == falso) { romper }
                 }
-                si (b == 96 y c == 36 y j + 1 < n y byte_en(txt, j + 1) == 123) { tiene_interp = verdadero }
+                si (estilo == "dolar_llave" y c == 36 y j + 1 < n y byte_en(txt, j + 1) == 123) { tiene_interp = verdadero }
                 si (triple) {
-                    si (c == 34 y j + 2 < n y byte_en(txt, j + 1) == 34 y byte_en(txt, j + 2) == 34) {
+                    si (c == b y j + 2 < n y byte_en(txt, j + 1) == b y byte_en(txt, j + 2) == b) {
                         j = j + 3
                         romper
                     }
@@ -123,6 +163,7 @@ funcion lexico(txt) {
             agregar(textos, subtexto(txt, desde, hasta))
             agregar(lineas, inicio_linea)
             agregar(interp, tiene_interp)
+            agregar(estilos, estilo)
             i = j
             continuar
         }
@@ -136,6 +177,7 @@ funcion lexico(txt) {
             agregar(textos, subtexto(txt, i, j))
             agregar(lineas, linea)
             agregar(interp, falso)
+            agregar(estilos, "")
             i = j
             continuar
         }
@@ -149,6 +191,7 @@ funcion lexico(txt) {
             agregar(textos, subtexto(txt, i, j))
             agregar(lineas, linea)
             agregar(interp, falso)
+            agregar(estilos, "")
             i = j
             continuar
         }
@@ -157,7 +200,8 @@ funcion lexico(txt) {
         agregar(textos, subtexto(txt, i, i + largo))
         agregar(lineas, linea)
         agregar(interp, falso)
+        agregar(estilos, "")
         i = i + largo
     }
-    retornar {"tipos": tipos, "textos": textos, "lineas": lineas, "interp": interp, "ignorar": ignorar, "total_lineas": linea}
+    retornar {"tipos": tipos, "textos": textos, "lineas": lineas, "interp": interp, "estilos": estilos, "ignorar": ignorar, "total_lineas": linea}
 }
