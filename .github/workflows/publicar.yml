@@ -1,0 +1,29 @@
+name: publicar
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  binarios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilar C-Forge desde su semilla
+        run: |
+          git clone --depth 1 https://github.com/VemorisSoftware/cforge "$RUNNER_TEMP/cforge"
+          make -C "$RUNNER_TEMP/cforge"
+          echo "$RUNNER_TEMP/cforge" >> "$GITHUB_PATH"
+      - name: Pruebas
+        run: cforge pruebas/pruebas.cfv
+      - name: Compilar para todas las plataformas
+        run: |
+          mkdir -p dist
+          for t in linux linux-arm64 macos macos-arm64; do cforge build vsr.cfv --target "$t" --release -o "dist/vsr-$t"; done
+          cforge build vsr.cfv --target windows --release -o dist/vsr-windows.exe
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Adjuntar a la versión
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/* --clobber
