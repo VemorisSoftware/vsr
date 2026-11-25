@@ -1,0 +1,14 @@
+importar "db"
+importar "sistema"
+sea args = argumentos()
+sea nombre = args[0]
+sistema_comando("grep " + nombre + " datos.txt")
+sea db = db_conectar("datos.db")
+db_consulta(db, "SELECT * FROM notas WHERE autor = '" + nombre + "'")
+db_consulta_p(db, "SELECT * FROM notas WHERE autor = ?", [nombre])
+sea contenido = leer_archivo("/datos/" + nombre)
+sea n = texto_a_numero(args[1])
+leer_archivo("/datos/fijo.txt")
+sea clave = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB"
+sea h = cfv_md5(contenido)
+sistema_comando("ls -la")

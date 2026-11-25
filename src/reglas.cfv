@@ -1,0 +1,229 @@
+// reglas.cfv — Catálogo de reglas de Vemoris Security Review.
+//
+// Cada lenguaje define:
+//   fuentes:      prefijos de cadenas (obj.prop) que traen datos externos
+//   llamadas_fuente: funciones que devuelven datos externos
+//   limpiadores:  funciones que validan o escapan un dato
+//   sumideros:    funciones peligrosas -> regla y modo
+//                 modo "dato":    alerta si recibe un dato externo
+//                 modo "armado":  alerta si recibe algo que no es literal
+//                                 (alta si es dato externo, media si no)
+//                 modo "sql":     alerta si arma SQL concatenando o interpolando
+//                 modo "siempre": la función es insegura en sí misma
+//                 3er elemento opcional: la cadena debe contener ese texto
+//                 (p. ej. "document" para document.write)
+//   asignaciones: propiedades peligrosas al asignarles un valor (innerHTML…)
+//
+// Las reglas (id) se describen en REGLAS con severidad, mensajes y arreglos
+// en español e inglés.
+
+sea REGLAS = {
+    "inyeccion-comandos": {
+        "severidad": "critica",
+        "es": "Un dato externo llega a un comando del sistema: permite ejecutar comandos arbitrarios.",
+        "en": "External data reaches a system command: allows arbitrary command execution.",
+        "arreglo_es": "No uses el shell. Pasa los argumentos como lista a una función que no invoque al shell y valida contra una lista permitida.",
+        "arreglo_en": "Avoid the shell. Pass arguments as a list to a function that doesn't invoke a shell and validate against an allow-list."
+    },
+    "inyeccion-sql": {
+        "severidad": "critica",
+        "es": "La consulta SQL se arma concatenando o interpolando valores: riesgo de inyección SQL.",
+        "en": "The SQL query is built by concatenation or interpolation: SQL injection risk.",
+        "arreglo_es": "Usa consultas parametrizadas (?, $1) y pasa los valores aparte.",
+        "arreglo_en": "Use parameterized queries (?, $1) and pass values separately."
+    },
+    "xss": {
+        "severidad": "alta",
+        "es": "Se inserta HTML con datos que pueden venir del usuario: riesgo de XSS.",
+        "en": "HTML is inserted with data that may come from the user: XSS risk.",
+        "arreglo_es": "Usa textContent o el escapado del framework; si necesitas HTML, sanitízalo (DOMPurify).",
+        "arreglo_en": "Use textContent or the framework's escaping; if HTML is needed, sanitize it (DOMPurify)."
+    },
+    "codigo-dinamico": {
+        "severidad": "alta",
+        "es": "Se ejecuta código construido en tiempo de ejecución (eval o similar).",
+        "en": "Code built at runtime is executed (eval or similar).",
+        "arreglo_es": "Elimina eval/Function; usa JSON.parse, un mapa de funciones permitidas o un parser.",
+        "arreglo_en": "Remove eval/Function; use JSON.parse, an allow-listed function map or a parser."
+    },
+    "recorrido-rutas": {
+        "severidad": "alta",
+        "es": "Una ruta de archivo se arma con datos externos: permite leer o escribir fuera de la carpeta prevista (path traversal).",
+        "en": "A file path is built from external data: allows reading or writing outside the intended folder (path traversal).",
+        "arreglo_es": "Normaliza la ruta, verifica que quede dentro de la carpeta permitida y rechaza '..'.",
+        "arreglo_en": "Normalize the path, check it stays inside the allowed folder and reject '..'."
+    },
+    "ssrf": {
+        "severidad": "alta",
+        "es": "Se hace una petición de red a una dirección que controla el usuario (SSRF).",
+        "en": "A network request is made to an address controlled by the user (SSRF).",
+        "arreglo_es": "Valida el host contra una lista permitida y bloquea direcciones internas (127.0.0.1, 169.254.x, 10.x…).",
+        "arreglo_en": "Validate the host against an allow-list and block internal addresses (127.0.0.1, 169.254.x, 10.x…)."
+    },
+    "redireccion-abierta": {
+        "severidad": "media",
+        "es": "Se redirige a una URL que controla el usuario (redirección abierta).",
+        "en": "Redirect to a user-controlled URL (open redirect).",
+        "arreglo_es": "Redirige solo a rutas internas o a una lista de destinos permitidos.",
+        "arreglo_en": "Only redirect to internal paths or an allow-list of destinations."
+    },
+    "desbordamiento-memoria": {
+        "severidad": "critica",
+        "es": "Función de C sin límite de tamaño: puede desbordar el búfer.",
+        "en": "Unbounded C function: can overflow the buffer.",
+        "arreglo_es": "Usa std::string, snprintf o strlcpy/strlcat con el tamaño del destino.",
+        "arreglo_en": "Use std::string, snprintf or strlcpy/strlcat with the destination size."
+    },
+    "cadena-formato": {
+        "severidad": "alta",
+        "es": "El formato de printf no es literal: un atacante puede leer o escribir memoria (format string).",
+        "en": "printf format is not a literal: an attacker can read or write memory (format string).",
+        "arreglo_es": "Usa un formato fijo: printf(\"%s\", valor).",
+        "arreglo_en": "Use a fixed format: printf(\"%s\", value)."
+    },
+    "secreto-expuesto": {
+        "severidad": "critica",
+        "es": "Hay una clave o credencial escrita en el código.",
+        "en": "A key or credential is written in the code.",
+        "arreglo_es": "Muévela a una variable de entorno o gestor de secretos y rótala: ya debe considerarse comprometida.",
+        "arreglo_en": "Move it to an environment variable or secrets manager and rotate it: consider it compromised."
+    },
+    "tls-desactivado": {
+        "severidad": "alta",
+        "es": "Se desactiva la verificación de certificados TLS: permite ataques de intermediario.",
+        "en": "TLS certificate verification is disabled: allows man-in-the-middle attacks.",
+        "arreglo_es": "Deja activa la verificación; para certificados propios, agrega la CA de confianza.",
+        "arreglo_en": "Keep verification on; for self-signed certificates, add the trusted CA."
+    },
+    "almacenamiento-inseguro": {
+        "severidad": "media",
+        "es": "Se guarda un dato sensible en un almacenamiento sin cifrar.",
+        "en": "Sensitive data is stored in unencrypted storage.",
+        "arreglo_es": "Usa el Llavero (Keychain) para tokens y contraseñas.",
+        "arreglo_en": "Use the Keychain for tokens and passwords."
+    },
+    "hash-debil": {
+        "severidad": "baja",
+        "es": "Se usa MD5 o SHA-1, que no son seguros para contraseñas ni firmas.",
+        "en": "MD5 or SHA-1 is used; they are not safe for passwords or signatures.",
+        "arreglo_es": "Contraseñas: argon2id o bcrypt. Integridad: SHA-256 o superior.",
+        "arreglo_en": "Passwords: argon2id or bcrypt. Integrity: SHA-256 or better."
+    },
+    "aleatorio-inseguro": {
+        "severidad": "media",
+        "es": "Se usa un generador aleatorio no criptográfico para un valor de seguridad.",
+        "en": "A non-cryptographic random generator is used for a security value.",
+        "arreglo_es": "Usa crypto.getRandomValues / randomBytes / SecRandomCopyBytes / crypto_rand_bytes.",
+        "arreglo_en": "Use crypto.getRandomValues / randomBytes / SecRandomCopyBytes / crypto_rand_bytes."
+    },
+    "regex-dinamica": {
+        "severidad": "baja",
+        "es": "Se crea una expresión regular con datos del usuario: posible ReDoS.",
+        "en": "A regular expression is built from user data: possible ReDoS.",
+        "arreglo_es": "Escapa el texto antes de usarlo en la regex o limita su largo.",
+        "arreglo_en": "Escape the text before using it in the regex or limit its length."
+    },
+    "ats-desactivado": {
+        "severidad": "media",
+        "es": "App Transport Security permite conexiones HTTP sin cifrar.",
+        "en": "App Transport Security allows unencrypted HTTP connections.",
+        "arreglo_es": "Elimina NSAllowsArbitraryLoads; si un dominio lo requiere, usa una excepción solo para ese dominio.",
+        "arreglo_en": "Remove NSAllowsArbitraryLoads; if a domain needs it, add an exception for that domain only."
+    }
+}
+
+sea LENGUAJES = {
+    "js": {
+        "nombre": "JavaScript/TypeScript",
+        "fuentes": ["req.body", "req.query", "req.params", "req.headers", "req.cookies", "req.url", "request.body", "request.query", "request.params", "request.url", "request.json", "request.formData", "request.text", "ctx.request", "ctx.query", "ctx.params", "c.req", "event.body", "event.queryStringParameters", "event.pathParameters", "location.search", "location.hash", "location.href", "window.location", "document.location", "document.URL", "document.cookie", "document.referrer", "window.name", "process.argv", "url.searchParams", "searchParams.get", "params.get"],
+        "llamadas_fuente": ["prompt", "useSearchParams", "useParams"],
+        "limpiadores": ["parseInt", "parseFloat", "Number", "Boolean", "encodeURIComponent", "encodeURI", "escape", "escapeHtml", "sanitize", "sanitizeHtml", "DOMPurify", "basename", "parse", "safeParse", "validate", "escapeId", "format"],
+        "sumideros": {
+            "exec": ["inyeccion-comandos", "armado"], "execSync": ["inyeccion-comandos", "armado"],
+            "eval": ["codigo-dinamico", "armado"], "Function": ["codigo-dinamico", "armado"],
+            "setTimeout": ["codigo-dinamico", "dato"], "setInterval": ["codigo-dinamico", "dato"],
+            "write": ["xss", "dato", "document"], "writeln": ["xss", "dato", "document"], "insertAdjacentHTML": ["xss", "armado"],
+            "query": ["inyeccion-sql", "sql"], "execute": ["inyeccion-sql", "sql"], "raw": ["inyeccion-sql", "sql"],
+            "$queryRawUnsafe": ["inyeccion-sql", "sql"], "$executeRawUnsafe": ["inyeccion-sql", "sql"],
+            "prepare": ["inyeccion-sql", "sql"], "run": ["inyeccion-sql", "sql"], "all": ["inyeccion-sql", "sql"], "exec_sql": ["inyeccion-sql", "sql"],
+            "redirect": ["redireccion-abierta", "dato"],
+            "readFile": ["recorrido-rutas", "dato"], "readFileSync": ["recorrido-rutas", "dato"], "createReadStream": ["recorrido-rutas", "dato"],
+            "writeFile": ["recorrido-rutas", "dato"], "writeFileSync": ["recorrido-rutas", "dato"], "unlink": ["recorrido-rutas", "dato"],
+            "unlinkSync": ["recorrido-rutas", "dato"], "sendFile": ["recorrido-rutas", "dato"], "readdir": ["recorrido-rutas", "dato"],
+            "fetch": ["ssrf", "dato"], "axios": ["ssrf", "dato"], "got": ["ssrf", "dato"],
+            "RegExp": ["regex-dinamica", "dato"]
+        },
+        "asignaciones": {"innerHTML": "xss", "outerHTML": "xss", "srcdoc": "xss", "href": "redireccion-abierta"}
+    },
+    "swift": {
+        "nombre": "Swift",
+        "fuentes": ["CommandLine.arguments", "req.query", "req.parameters", "req.content", "req.body", "req.url", "request.url", "url.query", "components.queryItems", "queryItems", "UIPasteboard.general", "ProcessInfo.processInfo.arguments"],
+        "llamadas_fuente": ["readLine"],
+        "limpiadores": ["Int", "Double", "Bool", "UUID", "addingPercentEncoding", "escaped", "sanitize", "lastPathComponent"],
+        "sumideros": {
+            "system": ["inyeccion-comandos", "armado"], "popen": ["inyeccion-comandos", "armado"],
+            "sqlite3_exec": ["inyeccion-sql", "sql"], "sqlite3_prepare_v2": ["inyeccion-sql", "sql"], "sqlite3_prepare": ["inyeccion-sql", "sql"],
+            "execute": ["inyeccion-sql", "sql"], "raw": ["inyeccion-sql", "sql"], "query": ["inyeccion-sql", "sql"],
+            "loadHTMLString": ["xss", "dato"], "evaluateJavaScript": ["xss", "armado"],
+            "contentsOfFile": ["recorrido-rutas", "dato"], "contents": ["recorrido-rutas", "dato"], "removeItem": ["recorrido-rutas", "dato"],
+            "createFile": ["recorrido-rutas", "dato"], "fileURLWithPath": ["recorrido-rutas", "dato"],
+            "dataTask": ["ssrf", "dato"], "data": ["ssrf", "dato"]
+        },
+        "asignaciones": {"arguments": "inyeccion-comandos", "launchPath": "inyeccion-comandos", "executableURL": "inyeccion-comandos"}
+    },
+    "cpp": {
+        "nombre": "C++",
+        "fuentes": ["argv", "std.cin", "cin"],
+        "llamadas_fuente": ["getenv", "secure_getenv"],
+        "limpiadores": ["stoi", "stol", "atoi", "atol", "strtol", "stod", "isValid", "validate", "sanitize", "escape"],
+        "sumideros": {
+            "system": ["inyeccion-comandos", "armado"], "popen": ["inyeccion-comandos", "armado"], "_popen": ["inyeccion-comandos", "armado"],
+            "execl": ["inyeccion-comandos", "dato"], "execlp": ["inyeccion-comandos", "dato"], "execle": ["inyeccion-comandos", "dato"],
+            "execv": ["inyeccion-comandos", "dato"], "execvp": ["inyeccion-comandos", "dato"], "execvpe": ["inyeccion-comandos", "dato"],
+            "ShellExecute": ["inyeccion-comandos", "dato"], "ShellExecuteA": ["inyeccion-comandos", "dato"], "WinExec": ["inyeccion-comandos", "armado"],
+            "gets": ["desbordamiento-memoria", "siempre"], "strcpy": ["desbordamiento-memoria", "siempre"], "strcat": ["desbordamiento-memoria", "siempre"],
+            "sprintf": ["desbordamiento-memoria", "siempre"], "vsprintf": ["desbordamiento-memoria", "siempre"], "wcscpy": ["desbordamiento-memoria", "siempre"],
+            "printf": ["cadena-formato", "formato"], "syslog": ["cadena-formato", "formato2"], "fprintf": ["cadena-formato", "formato2"],
+            "sqlite3_exec": ["inyeccion-sql", "sql"], "sqlite3_prepare_v2": ["inyeccion-sql", "sql"], "mysql_query": ["inyeccion-sql", "sql"], "PQexec": ["inyeccion-sql", "sql"],
+            "fopen": ["recorrido-rutas", "dato"], "ifstream": ["recorrido-rutas", "dato"], "ofstream": ["recorrido-rutas", "dato"], "open": ["recorrido-rutas", "dato"], "remove": ["recorrido-rutas", "dato"]
+        },
+        "asignaciones": {}
+    },
+    "cforge": {
+        "nombre": "C-Forge",
+        "fuentes": [],
+        "llamadas_fuente": ["argumentos", "argumentos_programa", "leer", "servidor_http_solicitud", "servidor_http_intentar"],
+        "limpiadores": ["texto_a_numero", "numero", "entero", "cfv_url_codificar", "ruta_nombre", "escapar_html", "html_escapar", "validar"],
+        "sumideros": {
+            "sistema_comando": ["inyeccion-comandos", "armado"], "system": ["inyeccion-comandos", "armado"], "popen": ["inyeccion-comandos", "armado"],
+            "db_consulta": ["inyeccion-sql", "sql"], "db_ejecutar": ["inyeccion-sql", "sql"], "db_valor": ["inyeccion-sql", "sql"],
+            "db_todos": ["inyeccion-sql", "sql"], "db_primera": ["inyeccion-sql", "sql"], "db_cada": ["inyeccion-sql", "sql"],
+            "leer_archivo": ["recorrido-rutas", "dato"], "escribir_archivo": ["recorrido-rutas", "dato"], "eliminar_archivo": ["recorrido-rutas", "dato"],
+            "listar_carpeta": ["recorrido-rutas", "dato"], "archivo_leer": ["recorrido-rutas", "dato"], "archivo_escribir": ["recorrido-rutas", "dato"],
+            "http_get": ["ssrf", "dato"], "http_post": ["ssrf", "dato"], "http_delete": ["ssrf", "dato"], "net_conectar": ["ssrf", "dato"]
+        },
+        "asignaciones": {}
+    }
+}
+
+// Prefijos de claves conocidas (todas las plataformas).
+sea PREFIJOS_SECRETOS = [
+    ["AKIA", 20, "AWS"], ["ASIA", 20, "AWS"], ["ghp_", 40, "GitHub"], ["gho_", 40, "GitHub"], ["ghs_", 40, "GitHub"],
+    ["github_pat_", 60, "GitHub"], ["sk-ant-", 30, "Anthropic"], ["sk_live_", 24, "Stripe"], ["rk_live_", 24, "Stripe"],
+    ["xoxb-", 20, "Slack"], ["xoxp-", 20, "Slack"], ["AIza", 39, "Google"], ["glpat-", 26, "GitLab"],
+    ["-----BEGIN RSA PRIVATE KEY", 120, "clave privada"], ["-----BEGIN PRIVATE KEY", 120, "clave privada"],
+    ["-----BEGIN OPENSSH PRIVATE KEY", 120, "clave privada"], ["-----BEGIN EC PRIVATE KEY", 120, "clave privada"]
+]
+
+sea PALABRAS_SECRETO = ["password", "passwd", "contrasena", "clave", "secret", "secreto", "token", "apikey", "api_key", "apisecret", "private_key", "access_key", "auth"]
+sea PALABRAS_EJEMPLO = ["example", "ejemplo", "xxxx", "changeme", "placeholder", "your_", "tu_", "dummy", "test", "prueba", "fake", "sample", "<", "${", "process.env", "redacted"]
+
+funcion lenguaje_de(ruta) {
+    sea ext = texto_minusculas(ruta_extension(ruta))
+    si (ext == ".js" o ext == ".mjs" o ext == ".cjs" o ext == ".jsx" o ext == ".ts" o ext == ".tsx" o ext == ".mts" o ext == ".cts" o ext == ".vue" o ext == ".svelte") { retornar "js" }
+    si (ext == ".swift") { retornar "swift" }
+    si (ext == ".cpp" o ext == ".cc" o ext == ".cxx" o ext == ".c" o ext == ".h" o ext == ".hpp" o ext == ".hh" o ext == ".hxx" o ext == ".mm" o ext == ".m") { retornar "cpp" }
+    si (ext == ".cfv") { retornar "cforge" }
+    si (ext == ".plist") { retornar "plist" }
+    retornar nulo
+}

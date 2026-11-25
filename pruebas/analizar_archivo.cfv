@@ -1,0 +1,5 @@
+importar "../src/reglas.cfv"
+importar "../src/analisis.cfv"
+sea ruta = argumentos()[0]
+sea r = analizar_texto(leer_archivo(ruta), lenguaje_de(ruta))
+para h en r { mostrar([h["linea"], h["regla"], h["severidad"], h["confianza"], h["detalle"]]) }

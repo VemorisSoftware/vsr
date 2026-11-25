@@ -1,0 +1,66 @@
+// Pruebas de Vemoris Security Review: cforge pruebas/pruebas.cfv
+importar "../src/reglas.cfv"
+importar "../src/analisis.cfv"
+
+sea fallos = 0
+sea total = 0
+
+funcion reglas_en(ruta) {
+    sea r = {}
+    para h en analizar_texto(leer_archivo(ruta), lenguaje_de(ruta)) {
+        r[h["regla"] + ":" + numero_a_texto(h["linea"])] = h["confianza"]
+    }
+    retornar r
+}
+
+funcion espera(ruta, claves) {
+    sea r = reglas_en(ruta)
+    para c en claves {
+        total = total + 1
+        si (tiene_clave(r, c) == falso) {
+            fallos = fallos + 1
+            mostrar("✗ " + ruta + ": falta " + c + "  (encontrado: " + texto_unir(mapa_claves(r), ", ") + ")")
+        }
+    }
+}
+
+funcion limpio(ruta) {
+    total = total + 1
+    sea r = reglas_en(ruta)
+    si (longitud(mapa_claves(r)) > 0) {
+        fallos = fallos + 1
+        mostrar("✗ " + ruta + ": debería estar limpio y tiene " + texto_unir(mapa_claves(r), ", "))
+    }
+}
+
+sea base = "pruebas/casos/"
+espera(base + "vulnerable.js", ["inyeccion-comandos:6", "inyeccion-sql:8", "xss:11", "redireccion-abierta:12", "recorrido-rutas:13", "codigo-dinamico:14", "inyeccion-sql:15", "secreto-expuesto:16", "aleatorio-inseguro:17", "tls-desactivado:18"])
+espera(base + "vulnerable.swift", ["inyeccion-comandos:6", "inyeccion-sql:7", "almacenamiento-inseguro:9", "xss:10"])
+espera(base + "vulnerable.cpp", ["desbordamiento-memoria:5", "inyeccion-comandos:7", "cadena-formato:8", "desbordamiento-memoria:11", "inyeccion-sql:12", "desbordamiento-memoria:14", "tls-desactivado:16"])
+espera(base + "vulnerable.cfv", ["inyeccion-comandos:5", "inyeccion-sql:7", "recorrido-rutas:9", "secreto-expuesto:12", "hash-debil:13"])
+limpio(base + "seguro.js")
+limpio(base + "seguro.swift")
+limpio(base + "seguro.cpp")
+limpio(base + "seguro.cfv")
+
+// Líneas silenciadas con vsr:ignorar
+total = total + 1
+sea silenciado = analizar_texto("exec('ls ' + req.query.x) // vsr:ignorar\n", "js")
+si (longitud(silenciado) != 0) {
+    fallos = fallos + 1
+    mostrar("✗ vsr:ignorar no silenció la línea")
+}
+
+// Lo literal no se marca
+total = total + 1
+si (longitud(analizar_texto("exec('ls -la')\nsistema_comando(\"date\")\n", "js")) != 0) {
+    fallos = fallos + 1
+    mostrar("✗ un comando literal no debería marcarse")
+}
+
+si (fallos == 0) {
+    mostrar("✓ " + numero_a_texto(total) + " pruebas pasaron")
+} sino {
+    mostrar("✗ " + numero_a_texto(fallos) + " de " + numero_a_texto(total) + " pruebas fallaron")
+    salir(1)
+}

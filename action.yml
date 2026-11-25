@@ -1,0 +1,97 @@
+name: Vemoris Security Review
+description: Revisión de seguridad propia de Vemoris para C++, Swift, JavaScript/TypeScript y C-Forge. Sin servicios externos. / Vemoris' own security review for C++, Swift, JS/TS and C-Forge. No external services.
+author: Vemoris Software
+branding:
+  icon: shield
+  color: orange
+inputs:
+  version:
+    description: Versión de VSR / VSR version
+    default: "0.1.0"
+  ruta:
+    description: Carpeta a revisar / Folder to scan
+    default: "."
+  idioma:
+    description: es | en
+    default: "es"
+  fallar-en:
+    description: critica | alta | media | baja | nunca
+    default: "alta"
+  umbral:
+    description: Confianza mínima (0-1) / Minimum confidence (0-1)
+    default: "0.6"
+  comentar:
+    description: Comentar el resultado en el Pull Request / Comment the result on the Pull Request
+    default: "true"
+  sarif:
+    description: Generar vsr.sarif para GitHub Code Scanning / Produce vsr.sarif for GitHub Code Scanning
+    default: "true"
+outputs:
+  hallazgos:
+    description: Cantidad de hallazgos / Number of findings
+    value: ${{ steps.escanear.outputs.hallazgos }}
+runs:
+  using: composite
+  steps:
+    - name: Descargar VSR
+      shell: bash
+      env:
+        VSR_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64)   bin=vsr-linux ;;
+          Linux-ARM64) bin=vsr-linux-arm64 ;;
+          macOS-X64)   bin=vsr-macos ;;
+          macOS-ARM64) bin=vsr-macos-arm64 ;;
+          *) echo "Plataforma no soportada: ${RUNNER_OS}-${RUNNER_ARCH}"; exit 1 ;;
+        esac
+        base="https://github.com/VemorisSoftware/vsr/releases/download/v${VSR_VERSION}"
+        curl -fsSL "$base/$bin" -o "$RUNNER_TEMP/vsr"
+        curl -fsSL "$base/SHA256SUMS" -o "$RUNNER_TEMP/SHA256SUMS"
+        esperado=$(grep " $bin\$" "$RUNNER_TEMP/SHA256SUMS" | cut -d' ' -f1)
+        obtenido=$( (sha256sum "$RUNNER_TEMP/vsr" 2>/dev/null || shasum -a 256 "$RUNNER_TEMP/vsr") | cut -d' ' -f1)
+        if [ "$esperado" != "$obtenido" ]; then echo "La suma SHA-256 de VSR no coincide"; exit 1; fi
+        chmod +x "$RUNNER_TEMP/vsr"
+
+    - name: Escanear
+      id: escanear
+      shell: bash
+      env:
+        RUTA: ${{ inputs.ruta }}
+        IDIOMA: ${{ inputs.idioma }}
+        UMBRAL: ${{ inputs.umbral }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        set -uo pipefail
+        diff=()
+        if [ -n "${BASE_REF}" ]; then
+          git fetch --no-tags --depth=200 origin "${BASE_REF}" >/dev/null 2>&1 || true
+          diff=(--diff "origin/${BASE_REF}")
+        fi
+        "$RUNNER_TEMP/vsr" escanear "$RUTA" ${diff[@]+"${diff[@]}"} --idioma "$IDIOMA" --umbral "$UMBRAL" --fallar-en nunca --formato json --salida "$RUNNER_TEMP/vsr.json"
+        "$RUNNER_TEMP/vsr" escanear "$RUTA" ${diff[@]+"${diff[@]}"} --idioma "$IDIOMA" --umbral "$UMBRAL" --fallar-en nunca --formato markdown --salida "$RUNNER_TEMP/vsr.md"
+        "$RUNNER_TEMP/vsr" escanear "$RUTA" ${diff[@]+"${diff[@]}"} --idioma "$IDIOMA" --umbral "$UMBRAL" --fallar-en nunca --formato sarif --salida vsr.sarif
+        "$RUNNER_TEMP/vsr" escanear "$RUTA" ${diff[@]+"${diff[@]}"} --idioma "$IDIOMA" --umbral "$UMBRAL" --fallar-en nunca
+        echo "hallazgos=$(grep -c '"huella"' "$RUNNER_TEMP/vsr.json" || true)" >> "$GITHUB_OUTPUT"
+        cat "$RUNNER_TEMP/vsr.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Comentar en el PR
+      if: ${{ inputs.comentar == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: gh pr comment "$PR" --body-file "$RUNNER_TEMP/vsr.md" --edit-last || gh pr comment "$PR" --body-file "$RUNNER_TEMP/vsr.md"
+
+    - name: Resultado
+      shell: bash
+      env:
+        RUTA: ${{ inputs.ruta }}
+        UMBRAL: ${{ inputs.umbral }}
+        FALLAR: ${{ inputs.fallar-en }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        diff=()
+        if [ -n "${BASE_REF}" ]; then diff=(--diff "origin/${BASE_REF}"); fi
+        "$RUNNER_TEMP/vsr" escanear "$RUTA" ${diff[@]+"${diff[@]}"} --umbral "$UMBRAL" --fallar-en "$FALLAR" --formato json --salida /dev/null

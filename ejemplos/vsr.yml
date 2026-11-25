@@ -1,0 +1,25 @@
+# Copia este archivo en .github/workflows/vsr.yml de tu repositorio.
+name: Seguridad (VSR)
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: write      # para comentar en el PR
+  security-events: write    # para subir el SARIF a Code Scanning
+jobs:
+  vsr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: VemorisSoftware/vsr@v0.1.0
+        with:
+          idioma: es
+          fallar-en: alta
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: vsr.sarif

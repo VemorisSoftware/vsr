@@ -1,0 +1,4 @@
+dist/
+vsr
+.vsr/ultimo.json
+pruebas/casos/.vsr/

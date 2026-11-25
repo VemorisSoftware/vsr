@@ -1,0 +1,7 @@
+importar "db"
+sea args = argumentos()
+sea n = texto_a_numero(args[0])
+sea db = db_conectar("datos.db")
+db_consulta_p(db, "SELECT * FROM notas WHERE id = ?", [n])
+sea texto = leer_archivo("config/ajustes.json")
+mostrar("hola " + args[0])

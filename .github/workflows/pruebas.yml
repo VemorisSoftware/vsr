@@ -1,0 +1,19 @@
+name: pruebas
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilar C-Forge desde su semilla
+        run: |
+          git clone --depth 1 https://github.com/VemorisSoftware/cforge "$RUNNER_TEMP/cforge"
+          make -C "$RUNNER_TEMP/cforge"
+          echo "$RUNNER_TEMP/cforge" >> "$GITHUB_PATH"
+      - run: cforge pruebas/pruebas.cfv
+      - run: cforge build vsr.cfv -o vsr --release && ./vsr escanear pruebas/casos --fallar-en nunca

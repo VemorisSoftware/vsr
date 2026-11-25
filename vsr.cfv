@@ -1,0 +1,503 @@
+// Vemoris Security Review (VSR) — revisor de seguridad propio, escrito en C-Forge.
+// Analiza C++, Swift, JavaScript/TypeScript y C-Forge sin servicios externos.
+//
+//   vsr escanear [ruta] [opciones]     Revisa una carpeta o archivo
+//   vsr ignorar <huella> [motivo]      Marca un hallazgo como falso positivo (VSR aprende)
+//   vsr confirmar <huella>             Marca un hallazgo como real (sube la confianza de la regla)
+//   vsr olvidar <huella>               Quita una marca anterior
+//   vsr reglas                         Lista las reglas
+//   vsr version
+//
+// Opciones de escanear:
+//   --formato texto|json|sarif|markdown   (texto)
+//   --salida <archivo>                    escribe el informe en un archivo
+//   --idioma es|en                        (es)
+//   --diff <base>                         solo líneas cambiadas respecto de <base> (git)
+//   --umbral <0..1>                       confianza mínima para mostrar (0.6; usa 0.5 para ver también los "posibles")
+//   --fallar-en critica|alta|media|baja|nunca   código de salida 1 si hay hallazgos de ese nivel o más (alta)
+
+importar "src/reglas.cfv"
+importar "src/analisis.cfv"
+importar "json"
+importar "sistema"
+
+sea VERSION = "0.1.0"
+sea OMITIR = {"node_modules": verdadero, "dist": verdadero, "build": verdadero, "Pods": verdadero, "DerivedData": verdadero, "vendor": verdadero, "target": verdadero, "out": verdadero, "coverage": verdadero, "third_party": verdadero, "deps": verdadero, "bootstrap": verdadero}
+sea NIVELES = {"baja": 1, "media": 2, "alta": 3, "critica": 4, "nunca": 99}
+sea ICONOS = {"critica": "🔴", "alta": "🟠", "media": "🟡", "baja": "🔵"}
+sea NOMBRES = {"es": {"critica": "CRÍTICA", "alta": "ALTA", "media": "MEDIA", "baja": "BAJA"}, "en": {"critica": "CRITICAL", "alta": "HIGH", "media": "MEDIUM", "baja": "LOW"}}
+
+// ── Utilidades ───────────────────────────────────────────────────────────
+
+funcion t2(idioma, es, en) {
+    si (idioma == "en") { retornar en }
+    retornar es
+}
+
+funcion dos_cifras(n) {
+    si (n < 10) { retornar "0" + numero_a_texto(n) }
+    retornar numero_a_texto(n)
+}
+
+funcion fecha_hoy() {
+    sea f = cfv_fecha_ahora()
+    retornar numero_a_texto(f["anio"]) + "-" + dos_cifras(f["mes"]) + "-" + dos_cifras(f["dia"])
+}
+
+funcion opcion(args, nombre, defecto) {
+    sea i = 0
+    mientras (i + 1 < longitud(args)) {
+        si (args[i] == nombre) { retornar args[i + 1] }
+        i = i + 1
+    }
+    retornar defecto
+}
+
+funcion posicionales(args) {
+    sea r = []
+    sea i = 0
+    mientras (i < longitud(args)) {
+        si (texto_empieza_con(args[i], "--")) { i = i + 2 } sino {
+            agregar(r, args[i])
+            i = i + 1
+        }
+    }
+    retornar r
+}
+
+funcion seguro_para_shell(t) {
+    sea i = 0
+    mientras (i < longitud(t)) {
+        sea b = byte_en(t, i)
+        si (b == 34 o b == 36 o b == 96 o b == 92 o b == 39 o b == 59 o b == 38 o b == 124 o b == 10) { retornar falso }
+        i = i + 1
+    }
+    retornar verdadero
+}
+
+// Oculta el contenido de los textos entre comillas (para no filtrar secretos en informes).
+funcion enmascarar(linea) {
+    sea partes = []
+    sea n = longitud(linea)
+    sea i = 0
+    sea desde = 0
+    mientras (i < n) {
+        sea b = byte_en(linea, i)
+        si (b == 34 o b == 39 o b == 96) {
+            sea j = i + 1
+            mientras (j < n y byte_en(linea, j) != b) { j = j + 1 }
+            sea largo = j - i - 1
+            si (largo > 6) {
+                agregar(partes, subtexto(linea, desde, i + 5))
+                agregar(partes, "****")
+                desde = j
+            }
+            i = j
+        }
+        i = i + 1
+    }
+    agregar(partes, subtexto(linea, desde, n))
+    retornar texto_unir(partes, "")
+}
+
+funcion error_uso(msg) {
+    mostrar("vsr: " + msg)
+    salir(2)
+}
+
+// ── Memoria (aprendizaje) ────────────────────────────────────────────────
+
+funcion ruta_memoria(raiz) { retornar raiz + "/.vsr/memoria.json" }
+funcion ruta_ultimo(raiz) { retornar raiz + "/.vsr/ultimo.json" }
+
+funcion leer_json(ruta, defecto) {
+    si (existe_archivo(ruta) == falso) { retornar defecto }
+    sea r = defecto
+    intentar { r = json_parsear(leer_archivo(ruta)) } capturar (e) { r = defecto }
+    retornar r
+}
+
+funcion asegurar_dir_vsr(raiz) {
+    si (es_carpeta(raiz + "/.vsr") == falso) { crear_carpeta(raiz + "/.vsr") }
+    si (existe_archivo(raiz + "/.vsr/.gitignore") == falso) {
+        escribir_archivo(raiz + "/.vsr/.gitignore", "ultimo.json\n")
+    }
+}
+
+funcion memoria_vacia() {
+    retornar {"version": 1, "ignorados": {}, "reglas": {}}
+}
+
+funcion ajustar_confianza(memoria, regla, confianza) {
+    si (tiene_clave(memoria["reglas"], regla) == falso) { retornar confianza }
+    sea r = memoria["reglas"][regla]
+    sea falsos = r["falsos"]
+    sea reales = r["reales"]
+    sea f = (reales + 1) / (reales + falsos + 1)
+    sea c = confianza * (0.4 + 0.6 * f)
+    si (reales > falsos y c < confianza) { c = confianza }
+    si (c > 1) { c = 1 }
+    retornar c
+}
+
+funcion contar_regla(memoria, regla, campo, delta) {
+    si (tiene_clave(memoria["reglas"], regla) == falso) { memoria["reglas"][regla] = {"falsos": 0, "reales": 0} }
+    sea r = memoria["reglas"][regla]
+    r[campo] = r[campo] + delta
+    si (r[campo] < 0) { r[campo] = 0 }
+}
+
+// ── Recorrido de archivos ────────────────────────────────────────────────
+
+funcion recorrer(raiz, rel, lista) {
+    sea ruta = raiz
+    si (rel != "") { ruta = raiz + "/" + rel }
+    sea nombres = listar_carpeta(ruta)
+    si (nombres == nulo) { retornar nulo }
+    para nombre en nombres {
+        si (texto_empieza_con(nombre, ".") == falso y tiene_clave(OMITIR, nombre) == falso) {
+            sea sub = nombre
+            si (rel != "") { sub = rel + "/" + nombre }
+            sea completo = raiz + "/" + sub
+            si (es_carpeta(completo)) {
+                recorrer(raiz, sub, lista)
+            } sino {
+                si (lenguaje_de(nombre) != nulo y texto_termina_con(nombre, ".min.js") == falso) { agregar(lista, sub) }
+            }
+        }
+    }
+}
+
+// ── Modo diff (solo líneas cambiadas) ────────────────────────────────────
+
+funcion lineas_cambiadas(raiz, base) {
+    si (seguro_para_shell(raiz) == falso o seguro_para_shell(base) == falso) { error_uso("ruta o base con caracteres no permitidos") }
+    sea salida = sistema_comando("git -C \"" + raiz + "\" diff -U0 --no-color \"" + base + "\" --")
+    si (salida == nulo) { error_uso("no se pudo ejecutar git diff") }
+    sea cambios = {}
+    sea archivo = nulo
+    para l en texto_dividir(salida, "\n") {
+        si (texto_empieza_con(l, "+++ ")) {
+            archivo = subtexto(l, 4, longitud(l))
+            si (texto_empieza_con(archivo, "b/")) { archivo = subtexto(archivo, 2, longitud(archivo)) }
+            si (archivo == "/dev/null") { archivo = nulo } sino { cambios[archivo] = {} }
+        }
+        si (archivo != nulo y texto_empieza_con(l, "@@ ")) {
+            // @@ -a,b +c,d @@
+            sea mas = texto_indice(l, "+")
+            sea fin = texto_indice_desde(l, " ", mas)
+            sea rango = subtexto(l, mas + 1, fin)
+            sea partes = texto_dividir(rango, ",")
+            sea inicio = texto_a_numero(partes[0])
+            sea cuantas = 1
+            si (longitud(partes) > 1) { cuantas = texto_a_numero(partes[1]) }
+            sea k = 0
+            mientras (k < cuantas) {
+                cambios[archivo][numero_a_texto(inicio + k)] = verdadero
+                k = k + 1
+            }
+        }
+    }
+    retornar cambios
+}
+
+// ── Escaneo ──────────────────────────────────────────────────────────────
+
+funcion escanear(raiz, objetivo_rel, opciones) {
+    sea memoria = leer_json(ruta_memoria(raiz), memoria_vacia())
+    sea umbral = opciones["umbral"]
+    sea cambios = nulo
+    si (opciones["diff"] != nulo) { cambios = lineas_cambiadas(raiz, opciones["diff"]) }
+
+    sea archivos = []
+    si (objetivo_rel != "" y es_carpeta(raiz + "/" + objetivo_rel) == falso) {
+        agregar(archivos, objetivo_rel)
+    } sino {
+        recorrer(raiz, objetivo_rel, archivos)
+    }
+
+    sea hallazgos = []
+    sea ignorados = 0
+    sea revisados = 0
+    para rel en archivos {
+        si (cambios == nulo o tiene_clave(cambios, rel)) {
+            sea completo = raiz + "/" + rel
+            sea txt = nulo
+            intentar { txt = leer_archivo(completo) } capturar (e) { txt = nulo }
+            si (txt != nulo y longitud(txt) <= 2000000) {
+                revisados = revisados + 1
+                sea lineas = texto_dividir(txt, "\n")
+                para h en analizar_texto(txt, lenguaje_de(rel)) {
+                    sea texto_linea = ""
+                    si (h["linea"] >= 1 y h["linea"] <= longitud(lineas)) { texto_linea = texto_recortar(lineas[h["linea"] - 1]) }
+                    sea huella = subtexto(cfv_sha256(h["regla"] + "|" + rel + "|" + texto_linea), 0, 12)
+                    sea en_diff = cambios == nulo o tiene_clave(cambios[rel], numero_a_texto(h["linea"]))
+                    si (en_diff) {
+                        si (tiene_clave(memoria["ignorados"], huella)) {
+                            ignorados = ignorados + 1
+                        } sino {
+                            sea c = ajustar_confianza(memoria, h["regla"], h["confianza"])
+                            si (c >= umbral) {
+                                h["confianza"] = c
+                                h["archivo"] = rel
+                                h["huella"] = huella
+                                h["codigo"] = texto_linea
+                                si (h["regla"] == "secreto-expuesto") { h["codigo"] = enmascarar(texto_linea) }
+                                agregar(hallazgos, h)
+                            } sino { ignorados = ignorados + 1 }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Orden: severidad, luego archivo y línea.
+    hallazgos = ordenar_hallazgos(hallazgos)
+    retornar {"hallazgos": hallazgos, "revisados": revisados, "ignorados": ignorados}
+}
+
+funcion ordenar_hallazgos(lista) {
+    sea r = []
+    para nivel en ["critica", "alta", "media", "baja"] {
+        para h en lista { si (h["severidad"] == nivel) { agregar(r, h) } }
+    }
+    retornar r
+}
+
+// ── Formatos de salida ───────────────────────────────────────────────────
+
+funcion formato_texto(res, idioma) {
+    sea l = []
+    sea hs = res["hallazgos"]
+    agregar(l, "Vemoris Security Review " + VERSION + " — " + numero_a_texto(res["revisados"]) + t2(idioma, " archivos, ", " files, ") + numero_a_texto(longitud(hs)) + t2(idioma, " hallazgos", " findings"))
+    si (res["ignorados"] > 0) { agregar(l, t2(idioma, "(", "(") + numero_a_texto(res["ignorados"]) + t2(idioma, " ocultos por aprendizaje o baja confianza)", " hidden by learning or low confidence)")) }
+    si (longitud(hs) == 0) {
+        agregar(l, "")
+        agregar(l, t2(idioma, "✅ Sin hallazgos.", "✅ No findings."))
+    }
+    para h en hs {
+        sea regla = REGLAS[h["regla"]]
+        agregar(l, "")
+        agregar(l, ICONOS[h["severidad"]] + " " + NOMBRES[idioma][h["severidad"]] + "  " + h["regla"] + "  " + h["archivo"] + ":" + numero_a_texto(h["linea"]) + t2(idioma, "  (confianza ", "  (confidence ") + numero_a_texto(redondear(h["confianza"] * 100)) + "%)")
+        agregar(l, "   " + regla[idioma])
+        agregar(l, "   → " + h["detalle"])
+        si (h["codigo"] != "") { agregar(l, "   │ " + subtexto(h["codigo"], 0, 160)) }
+        agregar(l, t2(idioma, "   Arreglo: ", "   Fix: ") + regla["arreglo_" + idioma])
+        agregar(l, t2(idioma, "   Huella: ", "   Fingerprint: ") + h["huella"] + t2(idioma, "   (si no es un problema: vsr ignorar ", "   (if it's not an issue: vsr ignorar ") + h["huella"] + ")")
+    }
+    retornar texto_unir(l, "\n")
+}
+
+funcion formato_json(res) {
+    retornar json_bonito({"herramienta": "Vemoris Security Review", "version": VERSION, "revisados": res["revisados"], "ocultos": res["ignorados"], "hallazgos": res["hallazgos"]})
+}
+
+funcion nivel_sarif(sev) {
+    si (sev == "critica" o sev == "alta") { retornar "error" }
+    si (sev == "media") { retornar "warning" }
+    retornar "note"
+}
+
+funcion formato_sarif(res, idioma) {
+    sea reglas = []
+    para id en mapa_claves(REGLAS) {
+        sea r = REGLAS[id]
+        agregar(reglas, {"id": id, "shortDescription": {"text": r[idioma]}, "help": {"text": r["arreglo_" + idioma]}, "defaultConfiguration": {"level": nivel_sarif(r["severidad"])}, "properties": {"security-severity": numero_a_texto(NIVELES[r["severidad"]] * 2.4)}})
+    }
+    sea resultados = []
+    para h en res["hallazgos"] {
+        agregar(resultados, {
+            "ruleId": h["regla"],
+            "level": nivel_sarif(h["severidad"]),
+            "message": {"text": REGLAS[h["regla"]][idioma] + " — " + h["detalle"]},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": h["archivo"]}, "region": {"startLine": h["linea"]}}}],
+            "partialFingerprints": {"vsr/v1": h["huella"]},
+            "properties": {"confianza": h["confianza"]}
+        })
+    }
+    retornar json_bonito({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{"tool": {"driver": {"name": "Vemoris Security Review", "version": VERSION, "informationUri": "https://github.com/VemorisSoftware/vsr", "rules": reglas}}, "results": resultados}]
+    })
+}
+
+funcion escapar_md(t) {
+    retornar texto_reemplazar(texto_reemplazar(t, "|", "\\|"), "`", "'")
+}
+
+funcion formato_markdown(res, idioma) {
+    sea hs = res["hallazgos"]
+    sea l = []
+    agregar(l, "## 🛡️ Vemoris Security Review")
+    agregar(l, "")
+    si (longitud(hs) == 0) {
+        agregar(l, t2(idioma, "✅ No se encontraron problemas de seguridad en los cambios.", "✅ No security issues found in the changes."))
+        retornar texto_unir(l, "\n")
+    }
+    sea cuentas = {"critica": 0, "alta": 0, "media": 0, "baja": 0}
+    para h en hs { cuentas[h["severidad"]] = cuentas[h["severidad"]] + 1 }
+    sea resumen = []
+    para nivel en ["critica", "alta", "media", "baja"] {
+        si (cuentas[nivel] > 0) { agregar(resumen, ICONOS[nivel] + " " + numero_a_texto(cuentas[nivel]) + " " + texto_minusculas(NOMBRES[idioma][nivel])) }
+    }
+    agregar(l, t2(idioma, "Se encontraron **", "Found **") + numero_a_texto(longitud(hs)) + t2(idioma, "** posibles problemas: ", "** potential issues: ") + texto_unir(resumen, " · "))
+    agregar(l, "")
+    agregar(l, t2(idioma, "| | Archivo | Problema | Arreglo |", "| | File | Issue | Fix |"))
+    agregar(l, "|---|---|---|---|")
+    para h en hs {
+        sea r = REGLAS[h["regla"]]
+        agregar(l, "| " + ICONOS[h["severidad"]] + " | `" + escapar_md(h["archivo"]) + ":" + numero_a_texto(h["linea"]) + "` | **" + h["regla"] + "**: " + escapar_md(r[idioma]) + "<br>`" + escapar_md(h["detalle"]) + "` | " + escapar_md(r["arreglo_" + idioma]) + " |")
+    }
+    agregar(l, "")
+    agregar(l, t2(idioma, "<sub>Si un aviso no es un problema real, ejecuta `vsr ignorar <huella>` y VSR lo aprenderá. Huellas: ", "<sub>If a finding is not a real issue, run `vsr ignorar <fingerprint>` and VSR will learn. Fingerprints: ") + texto_unir(hs_huellas(hs), ", ") + "</sub>")
+    retornar texto_unir(l, "\n")
+}
+
+funcion hs_huellas(hs) {
+    sea r = []
+    para h en hs { agregar(r, "`" + h["huella"] + "`") }
+    retornar r
+}
+
+// ── Comandos ─────────────────────────────────────────────────────────────
+
+funcion cmd_escanear(args) {
+    sea pos = posicionales(args)
+    sea objetivo = "."
+    si (longitud(pos) > 1) { objetivo = pos[1] }
+    sea idioma = opcion(args, "--idioma", "es")
+    si (idioma != "en") { idioma = "es" }
+    sea formato = opcion(args, "--formato", "texto")
+    sea fallar = opcion(args, "--fallar-en", "alta")
+    si (tiene_clave(NIVELES, fallar) == falso) { error_uso("--fallar-en debe ser critica, alta, media, baja o nunca") }
+    sea opciones = {"umbral": texto_a_numero(opcion(args, "--umbral", "0.6")), "diff": opcion(args, "--diff", nulo)}
+
+    // La raíz es la carpeta (para la memoria); si es un archivo, su carpeta.
+    sea raiz = objetivo
+    sea rel = ""
+    si (es_carpeta(objetivo) == falso) {
+        si (existe_archivo(objetivo) == falso) { error_uso("no existe: " + objetivo) }
+        sea nombre = ruta_nombre(objetivo)
+        raiz = subtexto(objetivo, 0, longitud(objetivo) - longitud(nombre))
+        si (raiz == "") { raiz = "." }
+        si (texto_termina_con(raiz, "/") y longitud(raiz) > 1) { raiz = subtexto(raiz, 0, longitud(raiz) - 1) }
+        rel = nombre
+    }
+    sea res = escanear(raiz, rel, opciones)
+
+    // Guarda el último resultado para que "vsr ignorar <huella>" sepa de qué regla es.
+    intentar {
+        asegurar_dir_vsr(raiz)
+        sea ultimo = {}
+        para h en res["hallazgos"] { ultimo[h["huella"]] = {"regla": h["regla"], "archivo": h["archivo"], "linea": h["linea"]} }
+        escribir_archivo(ruta_ultimo(raiz), json_serializar(ultimo))
+    } capturar (e) { }
+
+    sea salida = ""
+    si (formato == "json") { salida = formato_json(res) }
+    sino si (formato == "sarif") { salida = formato_sarif(res, idioma) }
+    sino si (formato == "markdown") { salida = formato_markdown(res, idioma) }
+    sino { salida = formato_texto(res, idioma) }
+
+    sea destino = opcion(args, "--salida", nulo)
+    si (destino != nulo) { escribir_archivo(destino, salida + "\n") } sino { mostrar(salida) }
+
+    sea limite = NIVELES[fallar]
+    para h en res["hallazgos"] {
+        si (NIVELES[h["severidad"]] >= limite) { salir(1) }
+    }
+    salir(0)
+}
+
+funcion cmd_marcar(args, accion) {
+    sea pos = posicionales(args)
+    si (longitud(pos) < 2) { error_uso("falta la huella: vsr " + accion + " <huella>") }
+    sea huella = pos[1]
+    sea raiz = opcion(args, "--ruta", ".")
+    sea memoria = leer_json(ruta_memoria(raiz), memoria_vacia())
+    sea ultimo = leer_json(ruta_ultimo(raiz), {})
+    sea regla = nulo
+    si (tiene_clave(ultimo, huella)) { regla = ultimo[huella]["regla"] }
+    si (tiene_clave(memoria["ignorados"], huella)) { regla = memoria["ignorados"][huella]["regla"] }
+    si (regla == nulo) { error_uso("huella desconocida: ejecuta 'vsr escanear' primero") }
+
+    si (accion == "ignorar") {
+        si (tiene_clave(memoria["ignorados"], huella) == falso) {
+            sea motivo = ""
+            si (longitud(pos) > 2) { motivo = texto_unir(subtexto_lista(pos, 2), " ") }
+            sea info = {"regla": regla, "motivo": motivo, "fecha": fecha_hoy()}
+            si (tiene_clave(ultimo, huella)) { info["archivo"] = ultimo[huella]["archivo"] }
+            memoria["ignorados"][huella] = info
+            contar_regla(memoria, regla, "falsos", 1)
+        }
+        mostrar("✓ " + huella + " ignorado. VSR bajará la confianza de la regla " + regla + ".")
+    }
+    si (accion == "confirmar") {
+        contar_regla(memoria, regla, "reales", 1)
+        mostrar("✓ " + huella + " confirmado como real. VSR confiará más en la regla " + regla + ".")
+    }
+    si (accion == "olvidar") {
+        si (tiene_clave(memoria["ignorados"], huella)) {
+            memoria["ignorados"][huella] = nulo
+            sea limpio = {}
+            para k en mapa_claves(memoria["ignorados"]) {
+                si (memoria["ignorados"][k] != nulo) { limpio[k] = memoria["ignorados"][k] }
+            }
+            memoria["ignorados"] = limpio
+            contar_regla(memoria, regla, "falsos", -1)
+        }
+        mostrar("✓ " + huella + " olvidado.")
+    }
+    asegurar_dir_vsr(raiz)
+    escribir_archivo(ruta_memoria(raiz), json_bonito(memoria) + "\n")
+    salir(0)
+}
+
+funcion subtexto_lista(l, desde) {
+    sea r = []
+    sea i = desde
+    mientras (i < longitud(l)) {
+        agregar(r, l[i])
+        i = i + 1
+    }
+    retornar r
+}
+
+funcion cmd_reglas(args) {
+    sea idioma = opcion(args, "--idioma", "es")
+    si (idioma != "en") { idioma = "es" }
+    para id en mapa_claves(REGLAS) {
+        sea r = REGLAS[id]
+        mostrar(ICONOS[r["severidad"]] + " " + id + " — " + r[idioma])
+    }
+    salir(0)
+}
+
+funcion ayuda() {
+    mostrar("Vemoris Security Review " + VERSION)
+    mostrar("")
+    mostrar("  vsr escanear [ruta] [--formato texto|json|sarif|markdown] [--salida archivo]")
+    mostrar("               [--idioma es|en] [--diff base] [--umbral 0.6] [--fallar-en alta]")
+    mostrar("  vsr ignorar <huella> [motivo]   marca un falso positivo (VSR aprende)")
+    mostrar("  vsr confirmar <huella>          marca un problema real")
+    mostrar("  vsr olvidar <huella>            quita una marca")
+    mostrar("  vsr reglas                      lista las reglas")
+    mostrar("  vsr version")
+}
+
+// ── Inicio ───────────────────────────────────────────────────────────────
+
+sea args = argumentos()
+si (longitud(args) == 0) {
+    ayuda()
+    salir(0)
+}
+sea comando = args[0]
+si (comando == "escanear" o comando == "scan") { cmd_escanear(args) }
+sino si (comando == "ignorar" o comando == "ignore") { cmd_marcar(args, "ignorar") }
+sino si (comando == "confirmar" o comando == "confirm") { cmd_marcar(args, "confirmar") }
+sino si (comando == "olvidar" o comando == "forget") { cmd_marcar(args, "olvidar") }
+sino si (comando == "reglas" o comando == "rules") { cmd_reglas(args) }
+sino si (comando == "version" o comando == "--version") { mostrar("Vemoris Security Review " + VERSION) }
+sino { ayuda() }
